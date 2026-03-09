@@ -6,7 +6,6 @@ Kiro IDE 反向代理测试服务器
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-import httpx
 import uvicorn
 import json
 import logging

@@ -80,7 +80,7 @@ class BackgroundScheduler:
     
     async def _health_check(self, state):
         """健康检查"""
-        import httpx
+        from curl_cffi import requests as curl_requests
         from ..config import MODELS_URL
         from ..credential import CredentialStatus
         

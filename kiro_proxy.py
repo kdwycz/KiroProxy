@@ -7,7 +7,8 @@ Kiro API 反向代理服务器
 import json
 import uuid
 import os
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests import RequestsError
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
@@ -220,7 +221,7 @@ async def chat_completions(request: Request):
     logger.info(f"   消息: {messages[-1].get('content', '')[:100]}...")
     
     try:
-        async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+        async with curl_requests.AsyncSession(verify=False, timeout=60) as client:
             response = await client.post(
                 KIRO_API_URL,
                 headers=headers,
@@ -267,7 +268,7 @@ async def chat_completions(request: Request):
                 }
             })
             
-    except httpx.RequestError as e:
+    except RequestsError as e:
         logger.error(f"请求失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:

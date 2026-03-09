@@ -3,7 +3,7 @@
 
 import json
 import uuid
-import httpx
+from curl_cffi import requests as curl_requests
 from pathlib import Path
 
 TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-auth-token.json"
@@ -26,7 +26,7 @@ def get_models():
     # 尝试不同的参数
     params = {"origin": "AI_EDITOR"}
     
-    with httpx.Client(verify=False, timeout=30) as client:
+    with curl_requests.Session(verify=False, timeout=30) as client:
         resp = client.get(MODELS_URL, headers=headers, params=params)
         print(f"Status: {resp.status_code}")
         print(f"Headers: {dict(resp.headers)}")

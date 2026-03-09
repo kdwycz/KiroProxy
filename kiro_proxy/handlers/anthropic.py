@@ -273,168 +273,168 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
-                        if response.status_code != 200:
-                            error_text = response.content
-                            error_str = error_text if isinstance(error_text, str) else error_text.decode()
-                            print(f"=== Kiro API Error ===")
-                            print(f"Status: {response.status_code}")
-                            print(f"Response: {error_str[:500]}")
-                            print(f"Request model: {model}")
-                            print(f"History len: {len(history) if history else 0}")
-                            print(f"Tool results: {len(tool_results) if tool_results else 0}")
-                            # 对于 400 错误，打印更多请求细节
-                            if response.status_code == 400:
-                                print(f"Kiro request keys: {list(kiro_request.keys())}")
-                                if 'conversationState' in kiro_request:
-                                    cs = kiro_request['conversationState']
-                                    print(f"  conversationState keys: {list(cs.keys())}")
-                                    if 'currentMessage' in cs:
-                                        cm = cs['currentMessage']
-                                        print(f"  currentMessage keys: {list(cm.keys())}")
-                                        if 'userInputMessage' in cm:
-                                            uim = cm['userInputMessage']
-                                            print(f"  userInputMessage keys: {list(uim.keys())}")
-                                            content = uim.get('content', '')
-                                            print(f"  content (first 200 chars): {str(content)[:200]}")
-                                    if 'history' in cs:
-                                        hist = cs['history']
-                                        print(f"  history count: {len(hist) if hist else 0}")
-                                        if hist:
-                                            for i, h in enumerate(hist[:3]):
-                                                print(f"    history[{i}] keys: {list(h.keys()) if isinstance(h, dict) else type(h)}")
-                            print(f"======================")
-                            
-                            # 使用统一的错误处理
-                            http_status, error_type, error_msg, error_obj = _handle_kiro_error(
-                                response.status_code, error_str, current_account
+                    if response.status_code != 200:
+                        error_text = response.content
+                        error_str = error_text if isinstance(error_text, str) else error_text.decode()
+                        print(f"=== Kiro API Error ===")
+                        print(f"Status: {response.status_code}")
+                        print(f"Response: {error_str[:500]}")
+                        print(f"Request model: {model}")
+                        print(f"History len: {len(history) if history else 0}")
+                        print(f"Tool results: {len(tool_results) if tool_results else 0}")
+                        # 对于 400 错误，打印更多请求细节
+                        if response.status_code == 400:
+                            print(f"Kiro request keys: {list(kiro_request.keys())}")
+                            if 'conversationState' in kiro_request:
+                                cs = kiro_request['conversationState']
+                                print(f"  conversationState keys: {list(cs.keys())}")
+                                if 'currentMessage' in cs:
+                                    cm = cs['currentMessage']
+                                    print(f"  currentMessage keys: {list(cm.keys())}")
+                                    if 'userInputMessage' in cm:
+                                        uim = cm['userInputMessage']
+                                        print(f"  userInputMessage keys: {list(uim.keys())}")
+                                        content = uim.get('content', '')
+                                        print(f"  content (first 200 chars): {str(content)[:200]}")
+                                if 'history' in cs:
+                                    hist = cs['history']
+                                    print(f"  history count: {len(hist) if hist else 0}")
+                                    if hist:
+                                        for i, h in enumerate(hist[:3]):
+                                            print(f"    history[{i}] keys: {list(h.keys()) if isinstance(h, dict) else type(h)}")
+                        print(f"======================")
+                        
+                        # 使用统一的错误处理
+                        http_status, error_type, error_msg, error_obj = _handle_kiro_error(
+                            response.status_code, error_str, current_account
+                        )
+                        
+                        # 账号封禁 - 尝试切换账号
+                        if error_obj.should_switch_account:
+                            next_account = state.get_next_available_account(current_account.id)
+                            if next_account and retry_count < max_retries:
+                                print(f"[Stream] 切换账号: {current_account.id} -> {next_account.id}")
+                                current_account = next_account
+                                headers["Authorization"] = f"Bearer {current_account.get_token()}"
+                                retry_count += 1
+                                continue
+                        
+                        # 检查是否为内容长度超限错误，尝试截断重试
+                        if error_obj.type == ErrorType.CONTENT_TOO_LONG:
+                            history_chars, user_chars, total_chars = history_manager.estimate_request_chars(
+                                history, user_content
                             )
-                            
-                            # 账号封禁 - 尝试切换账号
-                            if error_obj.should_switch_account:
-                                next_account = state.get_next_available_account(current_account.id)
-                                if next_account and retry_count < max_retries:
-                                    print(f"[Stream] 切换账号: {current_account.id} -> {next_account.id}")
-                                    current_account = next_account
-                                    headers["Authorization"] = f"Bearer {current_account.get_token()}"
-                                    retry_count += 1
-                                    continue
-                            
-                            # 检查是否为内容长度超限错误，尝试截断重试
-                            if error_obj.type == ErrorType.CONTENT_TOO_LONG:
-                                history_chars, user_chars, total_chars = history_manager.estimate_request_chars(
-                                    history, user_content
-                                )
-                                print(f"[Stream] 内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
-                                async def api_caller(prompt: str) -> str:
-                                    return await _call_kiro_for_summary(prompt, current_account, headers)
-                                truncated_history, should_retry = await history_manager.handle_length_error_async(
-                                    history, retry_count, api_caller
-                                )
-                                if should_retry:
-                                    print(f"[Stream] 内容长度超限，{history_manager.truncate_info}")
-                                    history = truncated_history
-                                    # 重新构建请求
-                                    kiro_request = build_kiro_request(user_content, model, history, kiro_tools, images, tool_results)
-                                    retry_count += 1
-                                    continue
-                            
-                            if flow_id:
-                                flow_monitor.fail_flow(flow_id, error_type, error_msg, response.status_code, error_str)
-                            yield f'event: error\ndata: {{"type":"error","error":{{"type":"{error_type}","message":"{error_msg}"}}}}\n\n'
-                            duration = (time.time() - start_time) * 1000
-                            state.add_log(RequestLog(
-                                id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                                model=model, account_id=current_account.id if current_account else None,
-                                status=response.status_code, duration_ms=duration, error=error_msg
-                            ))
-                            stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
-                            return
-
-                        # 标记开始流式传输
-                        if flow_id:
-                            flow_monitor.start_streaming(flow_id)
-
-                        # 正常处理响应
-                        msg_id = f"msg_{log_id}"
-                        yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"{msg_id}","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
-                        yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":0,"content_block":{{"type":"text","text":""}}}}\n\n'
-                        yield f'event: ping\ndata: {{"type":"ping"}}\n\n'
-
-                        full_response = b""
-
-                        async for chunk in response.aiter_content():
-                            full_response += chunk
-
-                            try:
-                                pos = 0
-                                while pos < len(chunk):
-                                    if pos + 12 > len(chunk):
-                                        break
-                                    total_len = int.from_bytes(chunk[pos:pos+4], 'big')
-                                    if total_len == 0 or total_len > len(chunk) - pos:
-                                        break
-                                    headers_len = int.from_bytes(chunk[pos+4:pos+8], 'big')
-                                    payload_start = pos + 12 + headers_len
-                                    payload_end = pos + total_len - 4
-
-                                    if payload_start < payload_end:
-                                        try:
-                                            payload = json.loads(chunk[payload_start:payload_end].decode('utf-8'))
-                                            content = None
-                                            if 'assistantResponseEvent' in payload:
-                                                content = payload['assistantResponseEvent'].get('content')
-                                            elif 'content' in payload:
-                                                content = payload['content']
-                                            if content:
-                                                full_content += content
-                                                if flow_id:
-                                                    flow_monitor.add_chunk(flow_id, content)
-                                                yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{json.dumps(content)}}}}}\n\n'
-                                        except Exception:
-                                            pass
-                                    pos += total_len
-                            except Exception:
-                                pass
-
-                        result = parse_event_stream_full(full_response)
-
-                        yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":0}}\n\n'
-
-                        if result["tool_uses"]:
-                            for i, tool_use in enumerate(result["tool_uses"], 1):
-                                yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":{i},"content_block":{{"type":"tool_use","id":"{tool_use["id"]}","name":"{tool_use["name"]}","input":{{}}}}}}\n\n'
-                                yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":{i},"delta":{{"type":"input_json_delta","partial_json":{json.dumps(json.dumps(tool_use["input"]))}}}}}\n\n'
-                                yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":{i}}}\n\n'
-
-                        stop_reason = result["stop_reason"]
-                        yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":100}}}}\n\n'
-                        yield f'event: message_stop\ndata: {{"type":"message_stop"}}\n\n'
-
-                        # 完成 Flow
-                        if flow_id:
-                            flow_monitor.complete_flow(
-                                flow_id,
-                                status_code=200,
-                                content=full_content,
-                                tool_calls=result.get("tool_uses", []),
-                                stop_reason=stop_reason,
-                                usage=TokenUsage(
-                                    input_tokens=result.get("input_tokens", 0),
-                                    output_tokens=result.get("output_tokens", 0),
-                                ),
+                            print(f"[Stream] 内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
+                            async def api_caller(prompt: str) -> str:
+                                return await _call_kiro_for_summary(prompt, current_account, headers)
+                            truncated_history, should_retry = await history_manager.handle_length_error_async(
+                                history, retry_count, api_caller
                             )
-
-                        current_account.request_count += 1
-                        current_account.last_used = time.time()
-                        get_rate_limiter().record_request(current_account.id)
+                            if should_retry:
+                                print(f"[Stream] 内容长度超限，{history_manager.truncate_info}")
+                                history = truncated_history
+                                # 重新构建请求
+                                kiro_request = build_kiro_request(user_content, model, history, kiro_tools, images, tool_results)
+                                retry_count += 1
+                                continue
+                        
+                        if flow_id:
+                            flow_monitor.fail_flow(flow_id, error_type, error_msg, response.status_code, error_str)
+                        yield f'event: error\ndata: {{"type":"error","error":{{"type":"{error_type}","message":"{error_msg}"}}}}\n\n'
                         duration = (time.time() - start_time) * 1000
                         state.add_log(RequestLog(
                             id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
                             model=model, account_id=current_account.id if current_account else None,
-                            status=200, duration_ms=duration, error=None
+                            status=response.status_code, duration_ms=duration, error=error_msg
                         ))
-                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=True, latency_ms=duration)
+                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
+
+                    # 标记开始流式传输
+                    if flow_id:
+                        flow_monitor.start_streaming(flow_id)
+
+                    # 正常处理响应
+                    msg_id = f"msg_{log_id}"
+                    yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"{msg_id}","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
+                    yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":0,"content_block":{{"type":"text","text":""}}}}\n\n'
+                    yield f'event: ping\ndata: {{"type":"ping"}}\n\n'
+
+                    full_response = b""
+
+                    async for chunk in response.aiter_content():
+                        full_response += chunk
+
+                        try:
+                            pos = 0
+                            while pos < len(chunk):
+                                if pos + 12 > len(chunk):
+                                    break
+                                total_len = int.from_bytes(chunk[pos:pos+4], 'big')
+                                if total_len == 0 or total_len > len(chunk) - pos:
+                                    break
+                                headers_len = int.from_bytes(chunk[pos+4:pos+8], 'big')
+                                payload_start = pos + 12 + headers_len
+                                payload_end = pos + total_len - 4
+
+                                if payload_start < payload_end:
+                                    try:
+                                        payload = json.loads(chunk[payload_start:payload_end].decode('utf-8'))
+                                        content = None
+                                        if 'assistantResponseEvent' in payload:
+                                            content = payload['assistantResponseEvent'].get('content')
+                                        elif 'content' in payload:
+                                            content = payload['content']
+                                        if content:
+                                            full_content += content
+                                            if flow_id:
+                                                flow_monitor.add_chunk(flow_id, content)
+                                            yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{json.dumps(content)}}}}}\n\n'
+                                    except Exception:
+                                        pass
+                                pos += total_len
+                        except Exception:
+                            pass
+
+                    result = parse_event_stream_full(full_response)
+
+                    yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":0}}\n\n'
+
+                    if result["tool_uses"]:
+                        for i, tool_use in enumerate(result["tool_uses"], 1):
+                            yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":{i},"content_block":{{"type":"tool_use","id":"{tool_use["id"]}","name":"{tool_use["name"]}","input":{{}}}}}}\n\n'
+                            yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":{i},"delta":{{"type":"input_json_delta","partial_json":{json.dumps(json.dumps(tool_use["input"]))}}}}}\n\n'
+                            yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":{i}}}\n\n'
+
+                    stop_reason = result["stop_reason"]
+                    yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":100}}}}\n\n'
+                    yield f'event: message_stop\ndata: {{"type":"message_stop"}}\n\n'
+
+                    # 完成 Flow
+                    if flow_id:
+                        flow_monitor.complete_flow(
+                            flow_id,
+                            status_code=200,
+                            content=full_content,
+                            tool_calls=result.get("tool_uses", []),
+                            stop_reason=stop_reason,
+                            usage=TokenUsage(
+                                input_tokens=result.get("input_tokens", 0),
+                                output_tokens=result.get("output_tokens", 0),
+                            ),
+                        )
+
+                    current_account.request_count += 1
+                    current_account.last_used = time.time()
+                    get_rate_limiter().record_request(current_account.id)
+                    duration = (time.time() - start_time) * 1000
+                    state.add_log(RequestLog(
+                        id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
+                        model=model, account_id=current_account.id if current_account else None,
+                        status=200, duration_ms=duration, error=None
+                    ))
+                    stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=True, latency_ms=duration)
+                    return
 
             except RequestsError as e:
                 error_str = str(e).lower()

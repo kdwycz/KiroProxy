@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """测试反向代理是否正常工作"""
 
-import requests
+from curl_cffi import requests
 import json
 
 PROXY_URL = "http://127.0.0.1:8000"
@@ -60,6 +60,6 @@ if __name__ == "__main__":
         print("\n" + "=" * 50)
         print("✅ 所有测试通过！反向代理工作正常")
         print("=" * 50)
-    except requests.exceptions.ConnectionError:
+    except requests.RequestsError:
         print("\n❌ 连接失败！请先启动代理服务器:")
         print("   python proxy_server.py")

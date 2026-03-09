@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """测试 Kiro 反向代理"""
 
-import requests
+from curl_cffi import requests
 import json
 
 PROXY_URL = "http://127.0.0.1:8000"
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         print("\n" + "=" * 50)
         print("测试完成")
         print("=" * 50)
-    except requests.exceptions.ConnectionError:
+    except requests.RequestsError:
         print("\n❌ 连接失败！请先启动代理服务器:")
         print("   source venv/bin/activate")
         print("   python kiro_proxy.py")
