@@ -6,7 +6,8 @@ import json
 import uuid
 import time
 import asyncio
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.errors import RequestsError
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -409,7 +410,7 @@ async def handle_responses(request: Request):
     async def api_caller(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=60) as client:
                 resp = await client.post(KIRO_API_URL, json=req, headers=headers)
                 if resp.status_code == 200:
                     return parse_event_stream(resp.content)
@@ -518,7 +519,7 @@ async def handle_responses(request: Request):
     status_code = 0
     error_msg = None
     try:
-        async with httpx.AsyncClient(verify=False, timeout=120) as client:
+        async with curl_requests.AsyncSession(verify=False, timeout=120) as client:
             resp = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
             status_code = resp.status_code
             if resp.status_code != 200:
@@ -554,7 +555,7 @@ async def handle_responses(request: Request):
             account_id=account.id if account else "unknown",
             model=model,
             success=status_code == 200,
-            duration_ms=duration
+            latency_ms=duration
         )
 
 
@@ -594,15 +595,6 @@ def _build_response(result: dict, model: str, response_id: str) -> dict:
 async def _handle_stream(kiro_request, headers, account, model, log_id, start_time):
     """流式处理 - Codex 期望的 SSE 格式"""
     
-    # 保存完整请求用于调试
-    import os
-    debug_dir = "debug_requests"
-    os.makedirs(debug_dir, exist_ok=True)
-    debug_file = f"{debug_dir}/{log_id}_request.json"
-    with open(debug_file, 'w', encoding='utf-8') as f:
-        json.dump(kiro_request, f, indent=2, ensure_ascii=False)
-    print(f"[Responses] Saved request to {debug_file}")
-    
     async def generate():
         response_id = f"resp_{log_id}"
         item_id = f"msg_{log_id}"
@@ -614,149 +606,149 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
         print(f"[Responses] Request: model={model}, log_id={log_id}")
         
         try:
-            async with httpx.AsyncClient(verify=False, timeout=300) as client:
-                async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers) as response:
+            async with curl_requests.AsyncSession(verify=False, timeout=300) as client:
+                response = await client.post(KIRO_API_URL, json=kiro_request, headers=headers, stream=True)
                     
-                    if response.status_code != 200:
-                        error_text = await response.aread()
-                        error_msg = error_text.decode()[:500]
-                        print(f"[Responses] Kiro error: {response.status_code} - {error_msg[:200]}")
+                if response.status_code != 200:
+                    error_text = response.content
+                    error_msg = (error_text if isinstance(error_text, str) else error_text.decode())[:500]
+                    print(f"[Responses] Kiro error: {response.status_code} - {error_msg[:200]}")
                         
-                        # 打印更多调试信息
-                        if response.status_code == 400:
-                            cs = kiro_request.get("conversationState", {})
-                            hist = cs.get("history", [])
-                            print(f"[Responses] 400 Debug: history_len={len(hist)}")
-                            if hist:
-                                # 检查每条 history 的详细结构
-                                for i, h in enumerate(hist[:5]):  # 只打印前5条
-                                    if "userInputMessage" in h:
-                                        uim = h["userInputMessage"]
-                                        has_ctx = "userInputMessageContext" in uim
-                                        has_tr = has_ctx and "toolResults" in uim.get("userInputMessageContext", {})
-                                        content_len = len(uim.get("content", ""))
-                                        uim_keys = list(uim.keys())
-                                        print(f"[Responses]   hist[{i}]: user, keys={uim_keys}, content_len={content_len}, has_toolResults={has_tr}")
-                                    elif "assistantResponseMessage" in h:
-                                        arm = h["assistantResponseMessage"]
-                                        arm_keys = list(arm.keys())
-                                        has_tu = "toolUses" in arm
-                                        tu_count = len(arm.get("toolUses", []) or []) if has_tu else 0
-                                        content_len = len(arm.get("content", "") or "")
-                                        print(f"[Responses]   hist[{i}]: assistant, keys={arm_keys}, content_len={content_len}, has_toolUses={has_tu}, toolUses_count={tu_count}")
-                                    else:
-                                        print(f"[Responses]   hist[{i}]: UNKNOWN keys={list(h.keys())}")
-                                if len(hist) > 5:
-                                    print(f"[Responses]   ... ({len(hist) - 5} more)")
+                    # 打印更多调试信息
+                    if response.status_code == 400:
+                        cs = kiro_request.get("conversationState", {})
+                        hist = cs.get("history", [])
+                        print(f"[Responses] 400 Debug: history_len={len(hist)}")
+                        if hist:
+                            # 检查每条 history 的详细结构
+                            for i, h in enumerate(hist[:5]):  # 只打印前5条
+                                if "userInputMessage" in h:
+                                    uim = h["userInputMessage"]
+                                    has_ctx = "userInputMessageContext" in uim
+                                    has_tr = has_ctx and "toolResults" in uim.get("userInputMessageContext", {})
+                                    content_len = len(uim.get("content", ""))
+                                    uim_keys = list(uim.keys())
+                                    print(f"[Responses]   hist[{i}]: user, keys={uim_keys}, content_len={content_len}, has_toolResults={has_tr}")
+                                elif "assistantResponseMessage" in h:
+                                    arm = h["assistantResponseMessage"]
+                                    arm_keys = list(arm.keys())
+                                    has_tu = "toolUses" in arm
+                                    tu_count = len(arm.get("toolUses", []) or []) if has_tu else 0
+                                    content_len = len(arm.get("content", "") or "")
+                                    print(f"[Responses]   hist[{i}]: assistant, keys={arm_keys}, content_len={content_len}, has_toolUses={has_tu}, toolUses_count={tu_count}")
+                                else:
+                                    print(f"[Responses]   hist[{i}]: UNKNOWN keys={list(h.keys())}")
+                            if len(hist) > 5:
+                                print(f"[Responses]   ... ({len(hist) - 5} more)")
                             
-                            # 打印 currentMessage 结构
-                            cm = cs.get("currentMessage", {})
-                            if "userInputMessage" in cm:
-                                uim = cm["userInputMessage"]
-                                print(f"[Responses] currentMessage: keys={list(uim.keys())}, content_len={len(uim.get('content', ''))}")
-                                if "userInputMessageContext" in uim:
-                                    ctx = uim["userInputMessageContext"]
-                                    print(f"[Responses]   context keys={list(ctx.keys())}")
-                                    if "toolResults" in ctx:
-                                        print(f"[Responses]   toolResults count={len(ctx['toolResults'])}")
-                                    if "tools" in ctx:
-                                        print(f"[Responses]   tools count={len(ctx['tools'])}")
+                        # 打印 currentMessage 结构
+                        cm = cs.get("currentMessage", {})
+                        if "userInputMessage" in cm:
+                            uim = cm["userInputMessage"]
+                            print(f"[Responses] currentMessage: keys={list(uim.keys())}, content_len={len(uim.get('content', ''))}")
+                            if "userInputMessageContext" in uim:
+                                ctx = uim["userInputMessageContext"]
+                                print(f"[Responses]   context keys={list(ctx.keys())}")
+                                if "toolResults" in ctx:
+                                    print(f"[Responses]   toolResults count={len(ctx['toolResults'])}")
+                                if "tools" in ctx:
+                                    print(f"[Responses]   tools count={len(ctx['tools'])}")
                         
-                        error_occurred = True
+                    error_occurred = True
                         
-                        # 映射错误代码
-                        error_code = "api_error"
-                        error_lower = error_msg.lower()
-                        if response.status_code == 429 or "rate limit" in error_lower or "throttl" in error_lower:
-                            error_code = "rate_limit_exceeded"
-                        elif "context" in error_lower or "too long" in error_lower or "content length" in error_lower:
-                            error_code = "context_length_exceeded"
-                        elif "quota" in error_lower or "insufficient" in error_lower:
-                            error_code = "insufficient_quota"
-                        elif response.status_code == 401 or response.status_code == 403:
-                            error_code = "authentication_error"
+                    # 映射错误代码
+                    error_code = "api_error"
+                    error_lower = error_msg.lower()
+                    if response.status_code == 429 or "rate limit" in error_lower or "throttl" in error_lower:
+                        error_code = "rate_limit_exceeded"
+                    elif "context" in error_lower or "too long" in error_lower or "content length" in error_lower:
+                        error_code = "context_length_exceeded"
+                    elif "quota" in error_lower or "insufficient" in error_lower:
+                        error_code = "insufficient_quota"
+                    elif response.status_code == 401 or response.status_code == 403:
+                        error_code = "authentication_error"
                         
-                        yield _sse("response.failed", {
-                            "type": "response.failed",
-                            "response": {
-                                "id": response_id,
-                                "object": "response",
-                                "status": "failed",
-                                "error": {"code": error_code, "message": error_msg[:200]}
-                            }
-                        })
-                        duration = (time.time() - start_time) * 1000
-                        state.add_log(RequestLog(
-                            id=log_id,
-                            timestamp=time.time(),
-                            method="POST",
-                            path="/v1/responses (stream)",
-                            model=model,
-                            account_id=account.id if account else None,
-                            status=response.status_code,
-                            duration_ms=duration,
-                            error=error_msg[:200]
-                        ))
-                        stats_manager.record_request(
-                            account_id=account.id if account else "unknown",
-                            model=model,
-                            success=False,
-                            duration_ms=duration
-                        )
-                        return
-                    
-                    # 1. response.created
-                    yield _sse("response.created", {
-                        "type": "response.created",
+                    yield _sse("response.failed", {
+                        "type": "response.failed",
                         "response": {
                             "id": response_id,
                             "object": "response",
-                            "created_at": created_at,
-                            "status": "in_progress",
-                            "model": model,
-                            "output": []
+                            "status": "failed",
+                            "error": {"code": error_code, "message": error_msg[:200]}
                         }
                     })
+                    duration = (time.time() - start_time) * 1000
+                    state.add_log(RequestLog(
+                        id=log_id,
+                        timestamp=time.time(),
+                        method="POST",
+                        path="/v1/responses (stream)",
+                        model=model,
+                        account_id=account.id if account else None,
+                        status=response.status_code,
+                        duration_ms=duration,
+                        error=error_msg[:200]
+                    ))
+                    stats_manager.record_request(
+                        account_id=account.id if account else "unknown",
+                        model=model,
+                        success=False,
+                        latency_ms=duration
+                    )
+                    return
                     
-                    # 2. response.output_item.added
-                    yield _sse("response.output_item.added", {
-                        "type": "response.output_item.added",
-                        "output_index": 0,
-                        "item": {
-                            "id": item_id,
-                            "type": "message",
-                            "status": "in_progress",
-                            "role": "assistant",
-                            "content": []
-                        }
-                    })
+                # 1. response.created
+                yield _sse("response.created", {
+                    "type": "response.created",
+                    "response": {
+                        "id": response_id,
+                        "object": "response",
+                        "created_at": created_at,
+                        "status": "in_progress",
+                        "model": model,
+                        "output": []
+                    }
+                })
                     
-                    # 3. 流式读取并发送 delta
-                    full_response = b""
-                    async for chunk in response.aiter_bytes():
-                        full_response += chunk
+                # 2. response.output_item.added
+                yield _sse("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        "id": item_id,
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": []
+                    }
+                })
+                    
+                # 3. 流式读取并发送 delta
+                full_response = b""
+                async for chunk in response.aiter_content():
+                    full_response += chunk
                         
-                        # 尝试解析增量内容
-                        content = _extract_content_from_chunk(chunk)
-                        if content:
-                            full_content += content
-                            yield _sse("response.output_text.delta", {
-                                "type": "response.output_text.delta",
-                                "item_id": item_id,
-                                "output_index": 0,
-                                "content_index": 0,
-                                "delta": content
-                            })
+                    # 尝试解析增量内容
+                    content = _extract_content_from_chunk(chunk)
+                    if content:
+                        full_content += content
+                        yield _sse("response.output_text.delta", {
+                            "type": "response.output_text.delta",
+                            "item_id": item_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "delta": content
+                        })
                     
-                    # 解析完整响应获取工具调用
-                    result = parse_event_stream_full(full_response)
-                    tool_uses = result.get("tool_uses", [])
-                    if not full_content:
-                        full_content = "".join(result.get("content", []))
+                # 解析完整响应获取工具调用
+                result = parse_event_stream_full(full_response)
+                tool_uses = result.get("tool_uses", [])
+                if not full_content:
+                    full_content = "".join(result.get("content", []))
                     
-                    account.request_count += 1
-                    account.last_used = time.time()
-                    get_rate_limiter().record_request(account.id)
+                account.request_count += 1
+                account.last_used = time.time()
+                get_rate_limiter().record_request(account.id)
                     
         except Exception as e:
             error_occurred = True
@@ -784,7 +776,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 account_id=account.id if account else "unknown",
                 model=model,
                 success=False,
-                duration_ms=duration
+                latency_ms=duration
             )
             return
         
@@ -873,7 +865,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
             account_id=account.id if account else "unknown",
             model=model,
             success=True,
-            duration_ms=duration
+            latency_ms=duration
         )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

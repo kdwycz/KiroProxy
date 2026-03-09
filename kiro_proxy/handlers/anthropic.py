@@ -3,7 +3,8 @@ import json
 import uuid
 import time
 import asyncio
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.errors import RequestsError
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -102,7 +103,7 @@ async def _call_kiro_for_summary(prompt: str, account, headers: dict) -> str:
     """调用 Kiro API 生成摘要（内部使用）"""
     kiro_request = build_kiro_request(prompt, "claude-haiku-4.5", [])  # 用快速模型生成摘要
     try:
-        async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        async with curl_requests.AsyncSession(verify=False, timeout=60) as client:
             resp = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
             if resp.status_code == 200:
                 return parse_event_stream(resp.content)
@@ -224,58 +225,57 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
         
         while retry_count <= max_retries:
             try:
-                async with httpx.AsyncClient(verify=False, timeout=300) as client:
-                    async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers) as response:
+                async with curl_requests.AsyncSession(verify=False, timeout=300) as client:
+                    response = await client.post(KIRO_API_URL, json=kiro_request, headers=headers, stream=True)
                         
-                        # 处理配额超限
-                        if response.status_code == 429 or is_quota_exceeded_error(response.status_code, ""):
-                            current_account.mark_quota_exceeded("Rate limited (stream)")
+                    # 处理配额超限
+                    if response.status_code == 429 or is_quota_exceeded_error(response.status_code, ""):
+                        current_account.mark_quota_exceeded("Rate limited (stream)")
                             
-                            # 尝试切换账号
-                            next_account = state.get_next_available_account(current_account.id)
-                            if next_account and retry_count < max_retries:
-                                print(f"[Stream] 配额超限，切换账号: {current_account.id} -> {next_account.id}")
-                                current_account = next_account
-                                token = current_account.get_token()
-                                headers["Authorization"] = f"Bearer {token}"
-                                retry_count += 1
-                                continue
+                        # 尝试切换账号
+                        next_account = state.get_next_available_account(current_account.id)
+                        if next_account and retry_count < max_retries:
+                            print(f"[Stream] 配额超限，切换账号: {current_account.id} -> {next_account.id}")
+                            current_account = next_account
+                            token = current_account.get_token()
+                            headers["Authorization"] = f"Bearer {token}"
+                            retry_count += 1
+                            continue
                             
-                            if flow_id:
-                                flow_monitor.fail_flow(flow_id, "rate_limit_error", "All accounts rate limited", 429)
-                            yield f'event: error\ndata: {{"type":"error","error":{{"type":"rate_limit_error","message":"All accounts rate limited"}}}}\n\n'
-                            duration = (time.time() - start_time) * 1000
-                            state.add_log(RequestLog(
-                                id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                                model=model, account_id=current_account.id if current_account else None,
-                                status=429, duration_ms=duration, error="All accounts rate limited"
-                            ))
-                            stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
-                            return
+                        if flow_id:
+                            flow_monitor.fail_flow(flow_id, "rate_limit_error", "All accounts rate limited", 429)
+                        yield f'event: error\ndata: {{"type":"error","error":{{"type":"rate_limit_error","message":"All accounts rate limited"}}}}\n\n'
+                        duration = (time.time() - start_time) * 1000
+                        state.add_log(RequestLog(
+                            id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
+                            model=model, account_id=current_account.id if current_account else None,
+                            status=429, duration_ms=duration, error="All accounts rate limited"
+                        ))
+                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
+                        return
 
-                        # 处理可重试的服务端错误
-                        if is_retryable_error(response.status_code):
-                            if retry_count < max_retries:
-                                print(f"[Stream] 服务端错误 {response.status_code}，重试 {retry_count + 1}/{max_retries}")
-                                retry_count += 1
-                                import asyncio
-                                await asyncio.sleep(0.5 * (2 ** retry_count))
-                                continue
-                            if flow_id:
-                                flow_monitor.fail_flow(flow_id, "api_error", "Server error after retries", response.status_code)
-                            yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Server error after retries"}}}}\n\n'
-                            duration = (time.time() - start_time) * 1000
-                            state.add_log(RequestLog(
-                                id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                                model=model, account_id=current_account.id if current_account else None,
-                                status=response.status_code, duration_ms=duration, error="Server error after retries"
-                            ))
-                            stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
-                            return
+                    # 处理可重试的服务端错误
+                    if is_retryable_error(response.status_code):
+                        if retry_count < max_retries:
+                            print(f"[Stream] 服务端错误 {response.status_code}，重试 {retry_count + 1}/{max_retries}")
+                            retry_count += 1
+                            await asyncio.sleep(0.5 * (2 ** retry_count))
+                            continue
+                        if flow_id:
+                            flow_monitor.fail_flow(flow_id, "api_error", "Server error after retries", response.status_code)
+                        yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Server error after retries"}}}}\n\n'
+                        duration = (time.time() - start_time) * 1000
+                        state.add_log(RequestLog(
+                            id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
+                            model=model, account_id=current_account.id if current_account else None,
+                            status=response.status_code, duration_ms=duration, error="Server error after retries"
+                        ))
+                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
+                        return
 
                         if response.status_code != 200:
-                            error_text = await response.aread()
-                            error_str = error_text.decode()
+                            error_text = response.content
+                            error_str = error_text if isinstance(error_text, str) else error_text.decode()
                             print(f"=== Kiro API Error ===")
                             print(f"Status: {response.status_code}")
                             print(f"Response: {error_str[:500]}")
@@ -362,7 +362,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
                         full_response = b""
 
-                        async for chunk in response.aiter_bytes():
+                        async for chunk in response.aiter_content():
                             full_response += chunk
 
                             try:
@@ -436,39 +436,25 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=True, latency_ms=duration)
                         return
 
-            except httpx.TimeoutException:
+            except RequestsError as e:
+                error_str = str(e).lower()
+                is_timeout = "timeout" in error_str or "timed out" in error_str
+                label = "请求超时" if is_timeout else "连接错误"
+                error_code = "timeout_error" if is_timeout else "connection_error"
+                error_status = 408 if is_timeout else 502
                 if retry_count < max_retries:
-                    print(f"[Stream] 请求超时，重试 {retry_count + 1}/{max_retries}")
+                    print(f"[Stream] {label}，重试 {retry_count + 1}/{max_retries}")
                     retry_count += 1
-                    import asyncio
                     await asyncio.sleep(0.5 * (2 ** retry_count))
                     continue
                 if flow_id:
-                    flow_monitor.fail_flow(flow_id, "timeout_error", "Request timeout after retries", 408)
-                yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Request timeout after retries"}}}}\n\n'
+                    flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
+                yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"{label} after retries"}}}}\n\n'
                 duration = (time.time() - start_time) * 1000
                 state.add_log(RequestLog(
                     id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
                     model=model, account_id=current_account.id if current_account else None,
-                    status=408, duration_ms=duration, error="Request timeout after retries"
-                ))
-                stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
-                return
-            except httpx.ConnectError:
-                if retry_count < max_retries:
-                    print(f"[Stream] 连接错误，重试 {retry_count + 1}/{max_retries}")
-                    retry_count += 1
-                    import asyncio
-                    await asyncio.sleep(0.5 * (2 ** retry_count))
-                    continue
-                if flow_id:
-                    flow_monitor.fail_flow(flow_id, "connection_error", "Connection error after retries", 502)
-                yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Connection error after retries"}}}}\n\n'
-                duration = (time.time() - start_time) * 1000
-                state.add_log(RequestLog(
-                    id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                    model=model, account_id=current_account.id if current_account else None,
-                    status=502, duration_ms=duration, error="Connection error after retries"
+                    status=error_status, duration_ms=duration, error=f"{label} after retries"
                 ))
                 stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                 return
@@ -507,7 +493,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
     for retry in range(max_retries + 1):
         should_log = False
         try:
-            async with httpx.AsyncClient(verify=False, timeout=300) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=300) as client:
                 response = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
                 status_code = response.status_code
 
@@ -605,28 +591,22 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
         except HTTPException:
             should_log = True
             raise
-        except httpx.TimeoutException as e:
-            error_msg = f"Request timeout: {e}"
-            status_code = 408
+        except RequestsError as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            label = "Request timeout" if is_timeout else "Connection error"
+            error_code = "timeout_error" if is_timeout else "connection_error"
+            error_status = 408 if is_timeout else 502
+            error_msg = f"{label}: {e}"
+            status_code = error_status
             if retry < max_retries:
-                print(f"[NonStream] 请求超时，重试 {retry + 1}/{max_retries}")
+                print(f"[NonStream] {label}，重试 {retry + 1}/{max_retries}")
                 await retry_ctx.wait()
                 continue
             if flow_id:
-                flow_monitor.fail_flow(flow_id, "timeout_error", "Request timeout after retries", 408)
+                flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
             should_log = True
-            raise HTTPException(408, "Request timeout after retries")
-        except httpx.ConnectError as e:
-            error_msg = f"Connection error: {e}"
-            status_code = 502
-            if retry < max_retries:
-                print(f"[NonStream] 连接错误，重试 {retry + 1}/{max_retries}")
-                await retry_ctx.wait()
-                continue
-            if flow_id:
-                flow_monitor.fail_flow(flow_id, "connection_error", "Connection error after retries", 502)
-            should_log = True
-            raise HTTPException(502, "Connection error after retries")
+            raise HTTPException(error_status, f"{label} after retries")
         except Exception as e:
             error_msg = str(e)
             status_code = 500

@@ -10,8 +10,6 @@ venv/
 build/
 dist/
 release/
-*.spec
-!KiroProxy.spec
 
 # IDE
 .idea/
@@ -49,5 +47,5 @@ response.txt
 参考.txt
 
 # Other projects
-Antigravity-Manager/
-cc-switch/
+other_projects/
+.python-version

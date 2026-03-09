@@ -1,7 +1,7 @@
 """Kiro API Proxy - 主应用"""
 import json
 import uuid
-import httpx
+from curl_cffi import requests as curl_requests
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -9,8 +9,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .config import MODELS_URL
 from .core import state, scheduler, stats_manager
+from .core import get_history_config, update_history_config, TruncateStrategy
+from .core.rate_limiter import get_rate_limiter
 from .handlers import anthropic, openai, gemini, admin
 from .handlers import responses as responses_handler
 from .web import get_html_page
@@ -57,7 +60,7 @@ async def serve_assets(path: str):
     file_path = get_resource_path("assets") / path
     if file_path.exists():
         content_type = "image/svg+xml" if path.endswith(".svg") else "application/octet-stream"
-        return StreamingResponse(open(file_path, "rb"), media_type=content_type)
+        return StreamingResponse(open(file_path, "rb"), media_type=content_type, headers={"Cache-Control": "public, max-age=3600"})
     raise HTTPException(status_code=404)
 
 
@@ -81,7 +84,7 @@ async def models():
             "amz-sdk-invocation-id": str(uuid.uuid4()),
             "Authorization": f"Bearer {token}",
         }
-        async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        async with curl_requests.AsyncSession(verify=False, timeout=30) as client:
             resp = await client.get(MODELS_URL, headers=headers, params={"origin": "AI_EDITOR"})
             if resp.status_code == 200:
                 data = resp.json()
@@ -107,7 +110,7 @@ async def models():
         {"id": "claude-sonnet-4", "object": "model", "owned_by": "kiro", "name": "Claude Sonnet 4"},
         {"id": "claude-haiku-4.5", "object": "model", "owned_by": "kiro", "name": "Claude Haiku 4.5"},
         {"id": "claude-opus-4.5", "object": "model", "owned_by": "kiro", "name": "Claude Opus 4.5"},
-        {"id": "claude-opus-4.6", "object": "model", "owned_by": "kiro", "name": "Claude Opus 4.6"},
+        # {"id": "claude-opus-4.6", "object": "model", "owned_by": "kiro", "name": "Claude Opus 4.6"},
     ]}
 
 
@@ -435,9 +438,6 @@ async def remote_login_page(session_id: str):
 
 # ==================== 历史消息管理 API ====================
 
-from .core import get_history_config, update_history_config, TruncateStrategy
-from .core.rate_limiter import get_rate_limiter
-
 @app.get("/api/settings/history")
 async def api_get_history_config():
     """获取历史消息管理配置"""
@@ -552,7 +552,7 @@ def run(port: int = 8080):
     from .core import state
     state.current_port = port  # 设置当前端口供 WebUI 显示
     print(f"\n{'='*50}")
-    print(f"  Kiro API Proxy v1.7.16")
+    print(f"  Kiro API Proxy v{__version__}")
     print(f"  http://localhost:{port}")
     print(f"{'='*50}\n")
     uvicorn.run(app, host="0.0.0.0", port=port)

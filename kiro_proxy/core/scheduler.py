@@ -99,7 +99,7 @@ class BackgroundScheduler:
                     "content-type": "application/json"
                 }
                 
-                async with httpx.AsyncClient(verify=False, timeout=10) as client:
+                async with curl_requests.AsyncSession(verify=False, timeout=10) as client:
                     resp = await client.get(
                         MODELS_URL, 
                         headers=headers,

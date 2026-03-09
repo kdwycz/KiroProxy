@@ -1,0 +1,13 @@
+[project]
+name = "kiroproxy"
+version = "1.7.16"
+description = "Kiro API Proxy - 将 Kiro API 转换为 OpenAI/Anthropic/Gemini 兼容格式"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.135.1",
+    "uvicorn>=0.41.0",
+    "curl-cffi>=v0.14.0",
+]
+
+[project.scripts]
+kiro-proxy = "kiro_proxy.cli:main"

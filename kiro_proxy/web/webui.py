@@ -373,11 +373,10 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_DISABLE_NONESSENTIAL_T
     <table>
       <thead><tr><th>Kiro 模型</th><th>能力</th><th>可用名称</th></tr></thead>
       <tbody>
-        <tr><td><code>claude-sonnet-4</code></td><td>⭐⭐⭐ 推荐</td><td>gpt-4o, gpt-4, claude-3-5-sonnet-*, sonnet</td></tr>
-        <tr><td><code>claude-sonnet-4.5</code></td><td>⭐⭐⭐⭐ 更强</td><td>gemini-1.5-pro</td></tr>
-        <tr><td><code>claude-haiku-4.5</code></td><td>⚡ 快速</td><td>gpt-4o-mini, gpt-3.5-turbo, haiku</td></tr>
-        <tr><td><code>claude-opus-4.5</code></td><td>⭐⭐⭐⭐⭐ 最强</td><td>o1, o1-preview, opus</td></tr>
-        <tr><td><code>claude-opus-4.6</code></td><td>🚀 旗舰</td><td>opus-4.6</td></tr>
+        <tr><td><code>claude-sonnet-4</code></td><td>⭐⭐⭐ 推荐</td><td>gpt-4o, gpt-4.1-mini, o4-mini, sonnet</td></tr>
+        <tr><td><code>claude-sonnet-4.5</code></td><td>⭐⭐⭐⭐ 更强</td><td>gpt-4.1, gpt-5.3-codex, gemini-2.5-pro</td></tr>
+        <tr><td><code>claude-haiku-4.5</code></td><td>⚡ 快速</td><td>gpt-4o-mini, gpt-4.1-nano, haiku</td></tr>
+        <tr><td><code>claude-opus-4.5</code></td><td>⭐⭐⭐⭐⭐ 最强</td><td>o3, o1, gpt-5.4, opus</td></tr>
         <tr><td><code>auto</code></td><td>🤖 自动</td><td>auto</td></tr>
       </tbody>
     </table>

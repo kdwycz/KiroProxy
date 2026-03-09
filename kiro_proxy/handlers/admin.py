@@ -2,7 +2,7 @@
 import json
 import uuid
 import time
-import httpx
+from curl_cffi import requests as curl_requests
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
@@ -185,7 +185,7 @@ async def speedtest():
             "x-amz-user-agent": f"aws-sdk-js/1.0.0 KiroIDE-{kiro_version}-{machine_id}",
             "Authorization": f"Bearer {token}",
         }
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        async with curl_requests.AsyncSession(verify=False, timeout=10) as client:
             resp = await client.get(MODELS_URL, headers=headers, params={"origin": "AI_EDITOR"})
             latency = (time.time() - start) * 1000
             return {
@@ -417,7 +417,7 @@ async def run_health_check():
                 "content-type": "application/json"
             }
             
-            async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=10) as client:
                 resp = await client.get(
                     MODELS_URL,
                     headers=headers,
@@ -800,46 +800,116 @@ async def export_accounts():
     }
 
 
+def _convert_kam_account(kam: dict) -> tuple:
+    """将 kiro-account-manager 格式的账号转为 (name, credentials_dict)
+    
+    kiro-account-manager 导出格式是扁平 JSON，字段直接在顶层：
+    {accessToken, refreshToken, email, label, provider, clientId, clientSecret, 
+     region, profileArn, clientIdHash, expiresAt, ...}
+    """
+    provider = (kam.get("provider") or "").strip()
+    
+    # provider → authMethod 映射
+    if provider in ("BuilderId", "Enterprise"):
+        auth_method = "idc"
+    else:
+        auth_method = "social"
+    
+    # 构建名称：优先用 label，其次 email
+    name = kam.get("label") or kam.get("email") or f"KAM {provider} 账号"
+    
+    # 构建凭证
+    creds = {
+        "accessToken": kam.get("accessToken"),
+        "refreshToken": kam.get("refreshToken"),
+        "expiresAt": kam.get("expiresAt"),
+        "region": kam.get("region") or "us-east-1",
+        "authMethod": auth_method,
+        "profileArn": kam.get("profileArn"),
+    }
+    
+    # IdC 账号需要 clientId/clientSecret
+    if auth_method == "idc":
+        creds["clientId"] = kam.get("clientId")
+        creds["clientSecret"] = kam.get("clientSecret")
+        creds["clientIdHash"] = kam.get("clientIdHash")
+    
+    return name, creds
+
+
+def _detect_import_format(body) -> tuple:
+    """自动检测导入格式，返回 (format_name, accounts_list)
+    
+    支持的格式：
+    1. KiroProxy 格式: {"accounts": [{name, credentials: {...}}], "version": "1.0"}
+    2. kiro-account-manager 格式: [{accessToken, refreshToken, email, provider, ...}]
+    """
+    # 格式 2: 直接是数组 → kiro-account-manager
+    if isinstance(body, list):
+        return "kam", body
+    
+    # 格式 1: KiroProxy 自有格式（有 accounts 键）
+    if isinstance(body, dict) and "accounts" in body:
+        return "kiroproxy", body["accounts"]
+    
+    # 兜底：单个 KAM 账号对象
+    if isinstance(body, dict) and "accessToken" in body:
+        return "kam", [body]
+    
+    return "unknown", []
+
+
 async def import_accounts(request: Request):
-    """导入账号配置"""
+    """导入账号配置（自动识别 KiroProxy / kiro-account-manager 格式）"""
     body = await request.json()
-    accounts_data = body.get("accounts", [])
+    fmt, accounts_list = _detect_import_format(body)
     imported = 0
     errors = []
     
-    for acc_data in accounts_data:
+    if fmt == "unknown" or not accounts_list:
+        return {"ok": False, "imported": 0, "errors": ["无法识别导入格式"]}
+    
+    for acc_data in accounts_list:
         try:
-            creds = acc_data.get("credentials", {})
+            if fmt == "kam":
+                # kiro-account-manager 格式：扁平结构
+                name, creds = _convert_kam_account(acc_data)
+                enabled = acc_data.get("status") != "已封禁"
+            else:
+                # KiroProxy 格式：嵌套 credentials
+                name = acc_data.get("name", "导入账号")
+                creds = acc_data.get("credentials", {})
+                enabled = acc_data.get("enabled", True)
+            
             if not creds.get("accessToken"):
-                errors.append(f"{acc_data.get('name', '未知')}: 缺少 accessToken")
+                errors.append(f"{name}: 缺少 accessToken")
                 continue
+            
+            if not creds.get("refreshToken"):
+                errors.append(f"{name}: 缺少 refreshToken（无法自动刷新）")
             
             # 保存凭证到文件
             file_path = await save_credentials_to_file({
-                "accessToken": creds.get("accessToken"),
-                "refreshToken": creds.get("refreshToken"),
-                "expiresAt": creds.get("expiresAt"),
-                "region": creds.get("region", "us-east-1"),
-                "authMethod": creds.get("authMethod", "social"),
-                "clientId": creds.get("clientId"),
-                "clientSecret": creds.get("clientSecret"),
+                k: v for k, v in creds.items() if v is not None
             }, f"imported-{uuid.uuid4().hex[:8]}")
             
             # 添加账号
             account = Account(
                 id=uuid.uuid4().hex[:8],
-                name=acc_data.get("name", "导入账号"),
+                name=name,
                 token_path=file_path,
-                enabled=acc_data.get("enabled", True)
+                enabled=enabled
             )
             state.accounts.append(account)
             account.load_credentials()
             imported += 1
         except Exception as e:
-            errors.append(f"{acc_data.get('name', '未知')}: {str(e)}")
+            errors.append(f"{acc_data.get('name') or acc_data.get('label') or '未知'}: {str(e)}")
     
     state._save_accounts()
-    return {"ok": True, "imported": imported, "errors": errors}
+    
+    fmt_label = "kiro-account-manager" if fmt == "kam" else "KiroProxy"
+    return {"ok": True, "imported": imported, "errors": errors, "format": fmt_label}
 
 
 async def add_manual_token(request: Request):

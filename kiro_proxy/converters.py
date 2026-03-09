@@ -94,6 +94,18 @@ def truncate_description(desc: str, max_length: int = MAX_TOOL_DESCRIPTION_LENGT
     return desc[:max_length - 3] + "..."
 
 
+def dedupe_tool_results(results: List[dict]) -> List[dict]:
+    """按 toolUseId 去重工具结果"""
+    seen_ids = set()
+    unique = []
+    for tr in results:
+        tid = tr["toolUseId"]
+        if tid not in seen_ids:
+            seen_ids.add(tid)
+            unique.append(tr)
+    return unique
+
+
 # ==================== Anthropic 转换 ====================
 
 def convert_anthropic_tools_to_kiro(tools: List[dict]) -> List[dict]:
@@ -313,13 +325,7 @@ def convert_anthropic_messages_to_kiro(messages: List[dict], system="") -> Tuple
         # 处理工具结果
         if tool_results:
             # 去重
-            seen_ids = set()
-            unique_results = []
-            for tr in tool_results:
-                if tr["toolUseId"] not in seen_ids:
-                    seen_ids.add(tr["toolUseId"])
-                    unique_results.append(tr)
-            tool_results = unique_results
+            tool_results = dedupe_tool_results(tool_results)
             
             if is_last:
                 current_tool_results = tool_results
@@ -525,13 +531,7 @@ def convert_openai_messages_to_kiro(
         elif role == "user":
             # 如果有待处理的 tool results，先处理
             if pending_tool_results:
-                # 去重
-                seen_ids = set()
-                unique_results = []
-                for tr in pending_tool_results:
-                    if tr["toolUseId"] not in seen_ids:
-                        seen_ids.add(tr["toolUseId"])
-                        unique_results.append(tr)
+                unique_results = dedupe_tool_results(pending_tool_results)
                 
                 if is_last:
                     current_tool_results = unique_results
@@ -566,12 +566,7 @@ def convert_openai_messages_to_kiro(
         elif role == "assistant":
             # 如果有待处理的 tool results，先创建 user 消息
             if pending_tool_results:
-                seen_ids = set()
-                unique_results = []
-                for tr in pending_tool_results:
-                    if tr["toolUseId"] not in seen_ids:
-                        seen_ids.add(tr["toolUseId"])
-                        unique_results.append(tr)
+                unique_results = dedupe_tool_results(pending_tool_results)
                 
                 history.append({
                     "userInputMessage": {
@@ -617,12 +612,7 @@ def convert_openai_messages_to_kiro(
     
     # 处理末尾的 tool results
     if pending_tool_results:
-        seen_ids = set()
-        unique_results = []
-        for tr in pending_tool_results:
-            if tr["toolUseId"] not in seen_ids:
-                seen_ids.add(tr["toolUseId"])
-                unique_results.append(tr)
+        unique_results = dedupe_tool_results(pending_tool_results)
         current_tool_results = unique_results
         if not user_content:
             user_content = "Tool results provided."
@@ -816,12 +806,7 @@ def convert_gemini_contents_to_kiro(
         if role == "user":
             # 处理待处理的 tool responses
             if pending_tool_results:
-                seen_ids = set()
-                unique_results = []
-                for tr in pending_tool_results:
-                    if tr["toolUseId"] not in seen_ids:
-                        seen_ids.add(tr["toolUseId"])
-                        unique_results.append(tr)
+                unique_results = dedupe_tool_results(pending_tool_results)
                 
                 history.append({
                     "userInputMessage": {
@@ -861,12 +846,7 @@ def convert_gemini_contents_to_kiro(
         elif role == "model":
             # 处理待处理的 tool responses
             if pending_tool_results:
-                seen_ids = set()
-                unique_results = []
-                for tr in pending_tool_results:
-                    if tr["toolUseId"] not in seen_ids:
-                        seen_ids.add(tr["toolUseId"])
-                        unique_results.append(tr)
+                unique_results = dedupe_tool_results(pending_tool_results)
                 
                 history.append({
                     "userInputMessage": {

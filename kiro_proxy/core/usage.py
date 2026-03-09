@@ -3,7 +3,7 @@
 通过调用 AWS Q 的 getUsageLimits API 获取用户的用量信息。
 """
 import uuid
-import httpx
+from curl_cffi import requests as curl_requests
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -146,7 +146,7 @@ async def get_usage_limits(
     headers = build_usage_headers(access_token, machine_id, kiro_version)
     
     try:
-        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+        async with curl_requests.AsyncSession(timeout=10, verify=False) as client:
             response = await client.get(url, headers=headers)
             
             if response.status_code != 200:
@@ -156,7 +156,7 @@ async def get_usage_limits(
             usage_info = calculate_balance(data)
             return True, usage_info
             
-    except httpx.TimeoutException:
+    except Exception:
         return False, {"error": "请求超时"}
     except Exception as e:
         return False, {"error": f"请求失败: {str(e)}"}

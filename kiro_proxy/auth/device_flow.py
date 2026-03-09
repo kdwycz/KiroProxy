@@ -14,7 +14,7 @@ Social Auth (Google/GitHub):
 """
 import json
 import time
-import httpx
+from curl_cffi import requests as curl_requests
 import secrets
 import hashlib
 import base64
@@ -97,7 +97,7 @@ async def start_device_flow(region: str = "us-east-1") -> Tuple[bool, dict]:
     
     oidc_base = f"https://oidc.{region}.amazonaws.com"
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with curl_requests.AsyncSession(timeout=30) as client:
         # Step 1: 注册 OIDC 客户端
         print(f"[DeviceFlow] Step 1: 注册 OIDC 客户端...")
         
@@ -213,7 +213,7 @@ async def poll_device_flow() -> Tuple[bool, dict]:
         "deviceCode": _login_state.device_code
     }
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with curl_requests.AsyncSession(timeout=30) as client:
         try:
             token_resp = await client.post(
                 f"{oidc_base}/token",
@@ -425,7 +425,7 @@ async def exchange_social_auth_token(code: str, state: str) -> Tuple[bool, dict]
         "code_verifier": _social_auth_state.code_verifier,
     }
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with curl_requests.AsyncSession(timeout=30) as client:
         try:
             token_resp = await client.post(
                 f"{KIRO_AUTH_ENDPOINT}/oauth/token",

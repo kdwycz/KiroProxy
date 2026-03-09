@@ -3,7 +3,8 @@ import json
 import uuid
 import time
 import asyncio
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.errors import RequestsError
 from datetime import datetime
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -77,7 +78,7 @@ async def handle_chat_completions(request: Request):
     async def call_summary(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=60) as client:
                 resp = await client.post(KIRO_API_URL, json=req, headers=headers)
                 if resp.status_code == 200:
                     return parse_event_stream(resp.content)
@@ -122,7 +123,7 @@ async def handle_chat_completions(request: Request):
     try:
       for retry in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(verify=False, timeout=120) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=120) as client:
                 resp = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
                 status_code = resp.status_code
                 
@@ -215,22 +216,17 @@ async def handle_chat_completions(request: Request):
                 
         except HTTPException:
             raise
-        except httpx.TimeoutException:
-            error_msg = "Request timeout"
-            status_code = 408
+        except RequestsError as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            label = "Request timeout" if is_timeout else "Connection error"
+            error_msg = label
+            status_code = 408 if is_timeout else 502
             if retry < max_retries:
-                print(f"[OpenAI] 请求超时，重试 {retry + 1}/{max_retries}")
+                print(f"[OpenAI] {label}，重试 {retry + 1}/{max_retries}")
                 await asyncio.sleep(0.5 * (2 ** retry))
                 continue
-            raise HTTPException(408, "Request timeout after retries")
-        except httpx.ConnectError:
-            error_msg = "Connection error"
-            status_code = 502
-            if retry < max_retries:
-                print(f"[OpenAI] 连接错误，重试 {retry + 1}/{max_retries}")
-                await asyncio.sleep(0.5 * (2 ** retry))
-                continue
-            raise HTTPException(502, "Connection error after retries")
+            raise HTTPException(status_code, f"{label} after retries")
         except Exception as e:
             error_msg = str(e)
             status_code = 500

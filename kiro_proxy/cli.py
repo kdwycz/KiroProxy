@@ -55,40 +55,55 @@ def cmd_accounts_export(args):
 
 
 def cmd_accounts_import(args):
-    """导入账号配置"""
+    """导入账号配置（支持 KiroProxy / kiro-account-manager 格式）"""
     import uuid
     from .core import state, Account
     from .auth import save_credentials_to_file
+    from .handlers.admin import _detect_import_format, _convert_kam_account
     
     data = json.loads(Path(args.file).read_text())
-    accounts_data = data.get("accounts", [])
+    fmt, accounts_list = _detect_import_format(data)
     imported = 0
     
-    for acc_data in accounts_data:
-        creds = acc_data.get("credentials", {})
+    if fmt == "unknown" or not accounts_list:
+        print("错误: 无法识别导入格式")
+        return
+    
+    fmt_label = "kiro-account-manager" if fmt == "kam" else "KiroProxy"
+    print(f"检测到 {fmt_label} 格式，共 {len(accounts_list)} 个账号\n")
+    
+    for acc_data in accounts_list:
+        if fmt == "kam":
+            name, creds = _convert_kam_account(acc_data)
+            enabled = acc_data.get("status") != "已封禁"
+        else:
+            name = acc_data.get("name", "导入账号")
+            creds = acc_data.get("credentials", {})
+            enabled = acc_data.get("enabled", True)
+        
         if not creds.get("accessToken"):
-            print(f"跳过 {acc_data.get('name', '未知')}: 缺少 accessToken")
+            print(f"跳过 {name}: 缺少 accessToken")
             continue
+        
+        if not creds.get("refreshToken"):
+            print(f"警告 {name}: 缺少 refreshToken（无法自动刷新）")
         
         # 保存凭证到文件
         file_path = asyncio.run(save_credentials_to_file({
-            "accessToken": creds.get("accessToken"),
-            "refreshToken": creds.get("refreshToken"),
-            "expiresAt": creds.get("expiresAt"),
-            "region": creds.get("region", "us-east-1"),
-            "authMethod": creds.get("authMethod", "social"),
+            k: v for k, v in creds.items() if v is not None
         }, f"imported-{uuid.uuid4().hex[:8]}"))
         
         account = Account(
             id=uuid.uuid4().hex[:8],
-            name=acc_data.get("name", "导入账号"),
+            name=name,
             token_path=file_path,
-            enabled=acc_data.get("enabled", True)
+            enabled=enabled
         )
         state.accounts.append(account)
         account.load_credentials()
         imported += 1
-        print(f"已导入: {account.name}")
+        auth_label = creds.get("authMethod", "social")
+        print(f"已导入: {account.name} ({auth_label})")
     
     state._save_accounts()
     print(f"\n共导入 {imported} 个账号")
@@ -282,7 +297,8 @@ def main():
         prog="kiro-proxy",
         description="Kiro API Proxy CLI"
     )
-    parser.add_argument("-v", "--version", action="version", version="1.7.16")
+    from . import __version__
+    parser.add_argument("-v", "--version", action="version", version=__version__)
     
     subparsers = parser.add_subparsers(dest="command", help="命令")
     

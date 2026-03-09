@@ -4,7 +4,8 @@ import uuid
 import time
 import hashlib
 import asyncio
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.errors import RequestsError
 from fastapi import Request, HTTPException
 
 from ..config import KIRO_API_URL, map_model_name
@@ -75,7 +76,7 @@ async def handle_generate_content(model_name: str, request: Request):
     async def call_summary(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=60) as client:
                 resp = await client.post(KIRO_API_URL, json=req, headers=headers)
                 if resp.status_code == 200:
                     return parse_event_stream(resp.content)
@@ -96,17 +97,6 @@ async def handle_generate_content(model_name: str, request: Request):
     if history_manager.was_truncated:
         print(f"[Gemini] {history_manager.truncate_info}")
 
-    async def call_summary(prompt: str) -> str:
-        req = build_kiro_request(prompt, "claude-haiku-4.5", [])
-        try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
-                resp = await client.post(KIRO_API_URL, json=req, headers=headers)
-                if resp.status_code == 200:
-                    return parse_event_stream(resp.content)
-        except Exception as e:
-            print(f"[Summary] API 调用失败: {e}")
-        return ""
-    
     # 构建 Kiro 请求
     kiro_request = build_kiro_request(
         user_content, model, history,
@@ -123,7 +113,7 @@ async def handle_generate_content(model_name: str, request: Request):
     try:
       for retry in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(verify=False, timeout=120) as client:
+            async with curl_requests.AsyncSession(verify=False, timeout=120) as client:
                 resp = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
                 status_code = resp.status_code
                 
@@ -149,7 +139,6 @@ async def handle_generate_content(model_name: str, request: Request):
                 if is_retryable_error(resp.status_code):
                     if retry < max_retries:
                         print(f"[Gemini] 服务端错误 {resp.status_code}，重试 {retry + 1}/{max_retries}")
-                        import asyncio
                         await asyncio.sleep(0.5 * (2 ** retry))
                         continue
                     raise HTTPException(resp.status_code, f"Server error after {max_retries} retries")
@@ -213,30 +202,22 @@ async def handle_generate_content(model_name: str, request: Request):
                 
         except HTTPException:
             raise
-        except httpx.TimeoutException:
-            error_msg = "Request timeout"
-            status_code = 408
+        except RequestsError as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            label = "Request timeout" if is_timeout else "Connection error"
+            error_msg = label
+            status_code = 408 if is_timeout else 502
             if retry < max_retries:
-                print(f"[Gemini] 请求超时，重试 {retry + 1}/{max_retries}")
-                import asyncio
+                print(f"[Gemini] {label}，重试 {retry + 1}/{max_retries}")
                 await asyncio.sleep(0.5 * (2 ** retry))
                 continue
-            raise HTTPException(408, "Request timeout after retries")
-        except httpx.ConnectError:
-            error_msg = "Connection error"
-            status_code = 502
-            if retry < max_retries:
-                print(f"[Gemini] 连接错误，重试 {retry + 1}/{max_retries}")
-                import asyncio
-                await asyncio.sleep(0.5 * (2 ** retry))
-                continue
-            raise HTTPException(502, "Connection error after retries")
+            raise HTTPException(status_code, f"{label} after retries")
         except Exception as e:
             error_msg = str(e)
             status_code = 500
             if is_retryable_error(None, e) and retry < max_retries:
                 print(f"[Gemini] 网络错误，重试 {retry + 1}/{max_retries}: {type(e).__name__}")
-                import asyncio
                 await asyncio.sleep(0.5 * (2 ** retry))
                 continue
             raise HTTPException(500, str(e))

@@ -7,7 +7,7 @@
 4. 预估检测 - 发送前预估并截断
 """
 import json
-import httpx
+from curl_cffi import requests as curl_requests
 import time
 from typing import List, Dict, Any, Tuple, Optional, Callable
 from dataclasses import dataclass, field
