@@ -50,3 +50,6 @@ response.txt
 
 # Other projects
 other_projects/
+
+# Runtime data (config, logs, flows)
+data/

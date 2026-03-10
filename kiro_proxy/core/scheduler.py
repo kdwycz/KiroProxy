@@ -3,6 +3,8 @@ import asyncio
 from typing import Optional
 from datetime import datetime
 
+from .logger import logger
+
 
 class BackgroundScheduler:
     """后台任务调度器
@@ -26,7 +28,7 @@ class BackgroundScheduler:
             return
         self._running = True
         self._task = asyncio.create_task(self._run())
-        print("[Scheduler] 后台任务已启动")
+        logger.info("后台任务已启动")
     
     async def stop(self):
         """停止后台任务"""
@@ -37,7 +39,7 @@ class BackgroundScheduler:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        print("[Scheduler] 后台任务已停止")
+        logger.info("后台任务已停止")
     
     async def _run(self):
         """主循环"""
@@ -60,7 +62,7 @@ class BackgroundScheduler:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[Scheduler] 错误: {e}")
+                logger.error(f"调度器错误: {e}")
                 await asyncio.sleep(60)
     
     async def _refresh_expiring_tokens(self, state):
@@ -71,12 +73,12 @@ class BackgroundScheduler:
             
             # 提前 15 分钟刷新
             if acc.is_token_expiring_soon(15):
-                print(f"[Scheduler] Token 即将过期，预刷新: {acc.name}")
+                logger.info(f"Token 即将过期，预刷新: {acc.name}")
                 success, msg = await acc.refresh_token()
                 if success:
-                    print(f"[Scheduler] Token 刷新成功: {acc.name}")
+                    logger.info(f"Token 刷新成功: {acc.name}")
                 else:
-                    print(f"[Scheduler] Token 刷新失败: {acc.name} - {msg}")
+                    logger.warning(f"Token 刷新失败: {acc.name} - {msg}")
     
     async def _health_check(self, state):
         """健康检查"""
@@ -109,16 +111,16 @@ class BackgroundScheduler:
                     if resp.status_code == 200:
                         if acc.status == CredentialStatus.UNHEALTHY:
                             acc.status = CredentialStatus.ACTIVE
-                            print(f"[HealthCheck] 账号恢复健康: {acc.name}")
+                            logger.info(f"账号恢复健康: {acc.name}")
                     elif resp.status_code == 401:
                         acc.status = CredentialStatus.UNHEALTHY
-                        print(f"[HealthCheck] 账号认证失败: {acc.name}")
+                        logger.warning(f"账号认证失败: {acc.name}")
                     elif resp.status_code == 429:
                         # 配额超限，不改变状态
                         pass
                         
             except Exception as e:
-                print(f"[HealthCheck] 检查失败 {acc.name}: {e}")
+                logger.warning(f"健康检查失败 {acc.name}: {e}")
 
 
 # 全局调度器实例

@@ -7,6 +7,8 @@ import platform
 from dataclasses import dataclass
 from typing import List, Optional
 
+from .logger import logger
+
 
 @dataclass
 class BrowserInfo:
@@ -170,7 +172,7 @@ def open_url(url: str, browser_id: str = "default", incognito: bool = False) -> 
         
         return True
     except Exception as e:
-        print(f"[Browser] 打开失败: {e}")
+        logger.warning(f"浏览器打开失败: {e}")
         return False
 
 

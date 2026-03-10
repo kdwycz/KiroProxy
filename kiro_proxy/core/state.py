@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict
 from pathlib import Path
 
+from .logger import logger
+
 from ..config import TOKEN_PATH
 from ..credential import quota_manager, CredentialStatus
 from .account import Account
@@ -54,7 +56,7 @@ class ProxyState:
                         token_path=acc_data["token_path"],
                         enabled=acc_data.get("enabled", True)
                     ))
-            print(f"[State] 从配置加载 {len(self.accounts)} 个账号")
+            logger.info(f"从配置加载 {len(self.accounts)} 个账号")
         
         # 如果没有账号，尝试添加默认账号
         if not self.accounts and TOKEN_PATH.exists():

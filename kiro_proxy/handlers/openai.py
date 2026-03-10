@@ -15,6 +15,7 @@ from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
+from ..core.logger import logger
 from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, is_quota_exceeded_error
 from ..converters import generate_session_id, convert_openai_messages_to_kiro, extract_images_from_content
 
@@ -42,10 +43,10 @@ async def handle_chat_completions(request: Request):
     
     # 检查 token 是否即将过期，尝试刷新
     if account.is_token_expiring_soon(5):
-        print(f"[OpenAI] Token 即将过期，尝试刷新: {account.id}")
+        logger.info(f"Token 即将过期，尝试刷新: {account.id}")
         success, msg = await account.refresh_token()
         if not success:
-            print(f"[OpenAI] Token 刷新失败: {msg}")
+            logger.error(f"Token 刷新失败: {msg}")
     
     token = account.get_token()
     if not token:
@@ -64,7 +65,7 @@ async def handle_chat_completions(request: Request):
     rate_limiter = get_rate_limiter()
     can_request, wait_seconds, reason = rate_limiter.can_request(account.id)
     if not can_request:
-        print(f"[OpenAI] 限速: {reason}")
+        logger.info(f"限速: {reason}")
         await asyncio.sleep(wait_seconds)
     
     # 使用增强的转换函数
@@ -83,7 +84,7 @@ async def handle_chat_completions(request: Request):
                 if resp.status_code == 200:
                     return parse_event_stream(resp.content)
         except Exception as e:
-            print(f"[Summary] API 调用失败: {e}")
+            logger.error(f"API 调用失败: {e}")
         return ""
 
     # 检查是否需要智能摘要或错误重试预摘要
@@ -97,7 +98,7 @@ async def handle_chat_completions(request: Request):
     history = fix_history_alternation(history)
     
     if history_manager.was_truncated:
-        print(f"[OpenAI] {history_manager.truncate_info}")
+        logger.info(f"{history_manager.truncate_info}")
 
     
     # 提取最后一条消息中的图片
@@ -134,7 +135,7 @@ async def handle_chat_completions(request: Request):
                     # 尝试切换账号
                     next_account = state.get_next_available_account(current_account.id)
                     if next_account and retry < max_retries:
-                        print(f"[OpenAI] 配额超限，切换账号: {current_account.id} -> {next_account.id}")
+                        logger.info(f"配额超限，切换账号: {current_account.id} -> {next_account.id}")
                         current_account = next_account
                         token = current_account.get_token()
                         creds = current_account.get_credentials()
@@ -151,25 +152,25 @@ async def handle_chat_completions(request: Request):
                 # 处理可重试的服务端错误
                 if is_retryable_error(resp.status_code):
                     if retry < max_retries:
-                        print(f"[OpenAI] 服务端错误 {resp.status_code}，重试 {retry + 1}/{max_retries}")
+                        logger.error(f"服务端错误 {resp.status_code}，重试 {retry + 1}/{max_retries}")
                         await asyncio.sleep(0.5 * (2 ** retry))
                         continue
                     raise HTTPException(resp.status_code, f"Server error after {max_retries} retries")
                 
                 if resp.status_code != 200:
                     error_msg = resp.text
-                    print(f"[OpenAI] Kiro API error {resp.status_code}: {resp.text[:500]}")
+                    logger.error(f"Kiro API error {resp.status_code}: {resp.text[:500]}")
                     
                     # 使用统一的错误处理
                     error = classify_error(resp.status_code, error_msg)
-                    print(format_error_log(error, current_account.id))
+                    logger.error(format_error_log(error, current_account.id))
                     
                     # 账号封禁 - 禁用账号
                     if error.should_disable_account:
                         current_account.enabled = False
                         from ..credential import CredentialStatus
                         current_account.status = CredentialStatus.SUSPENDED
-                        print(f"[OpenAI] 账号 {current_account.id} 已被禁用 (封禁)")
+                        logger.warning(f"账号 {current_account.id} 已被禁用 (封禁)")
                     
                     # 配额超限 - 标记冷却
                     if error.type == ErrorType.RATE_LIMITED:
@@ -179,7 +180,7 @@ async def handle_chat_completions(request: Request):
                     if error.should_switch_account:
                         next_account = state.get_next_available_account(current_account.id)
                         if next_account and retry < max_retries:
-                            print(f"[OpenAI] 切换账号: {current_account.id} -> {next_account.id}")
+                            logger.info(f"切换账号: {current_account.id} -> {next_account.id}")
                             current_account = next_account
                             headers["Authorization"] = f"Bearer {current_account.get_token()}"
                             continue
@@ -189,12 +190,12 @@ async def handle_chat_completions(request: Request):
                         history_chars, user_chars, total_chars = history_manager.estimate_request_chars(
                             history, user_content
                         )
-                        print(f"[OpenAI] 内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
+                        logger.info(f"内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
                         truncated_history, should_retry = await history_manager.handle_length_error_async(
                             history, retry, call_summary
                         )
                         if should_retry:
-                            print(f"[OpenAI] 内容长度超限，{history_manager.truncate_info}")
+                            logger.info(f"内容长度超限，{history_manager.truncate_info}")
                             history = truncated_history
                             kiro_request = build_kiro_request(
                                 user_content, model, history,
@@ -204,7 +205,7 @@ async def handle_chat_completions(request: Request):
                             )
                             continue
                         else:
-                            print(f"[OpenAI] 内容长度超限但未重试: retry={retry}/{max_retries}")
+                            logger.info(f"内容长度超限但未重试: retry={retry}/{max_retries}")
                     
                     raise HTTPException(resp.status_code, error.user_message)
                 
@@ -223,7 +224,7 @@ async def handle_chat_completions(request: Request):
             error_msg = label
             status_code = 408 if is_timeout else 502
             if retry < max_retries:
-                print(f"[OpenAI] {label}，重试 {retry + 1}/{max_retries}")
+                logger.info(f"{label}，重试 {retry + 1}/{max_retries}")
                 await asyncio.sleep(0.5 * (2 ** retry))
                 continue
             raise HTTPException(status_code, f"{label} after retries")
@@ -232,7 +233,7 @@ async def handle_chat_completions(request: Request):
             status_code = 500
             # 检查是否为可重试的网络错误
             if is_retryable_error(None, e) and retry < max_retries:
-                print(f"[OpenAI] 网络错误，重试 {retry + 1}/{max_retries}: {type(e).__name__}")
+                logger.error(f"网络错误，重试 {retry + 1}/{max_retries}: {type(e).__name__}")
                 await asyncio.sleep(0.5 * (2 ** retry))
                 continue
             raise HTTPException(500, str(e))

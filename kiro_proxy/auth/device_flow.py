@@ -288,7 +288,8 @@ async def save_credentials_to_file(credentials: dict, name: str = "kiro-proxy-au
     Returns:
         保存的文件路径
     """
-    cache_dir = Path.home() / ".aws/sso/cache"
+    from kiro_proxy.core.settings import PROJECT_ROOT
+    cache_dir = PROJECT_ROOT / "data" / "tokens"
     cache_dir.mkdir(parents=True, exist_ok=True)
     
     # 生成文件名

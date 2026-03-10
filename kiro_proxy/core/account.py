@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .logger import logger
+
 from ..credential import (
     KiroCredentials, TokenRefresher, CredentialStatus,
     generate_machine_id, quota_manager
@@ -46,7 +48,7 @@ class Account:
             
             return self._credentials
         except Exception as e:
-            print(f"[Account] 加载凭证失败 {self.id}: {e}")
+            logger.warning(f"加载凭证失败 {self.id}: {e}")
             return None
     
     def _merge_client_credentials(self):

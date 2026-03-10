@@ -1,6 +1,7 @@
 """Flow Monitor - LLM 流量监控
 
 记录完整的请求/响应数据，支持查询、过滤、导出。
+支持 JSONL 文件持久化。
 """
 import json
 import time
@@ -11,6 +12,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from collections import deque
 from enum import Enum
+
+from .logger import logger
 
 
 class FlowState(str, Enum):
@@ -507,6 +510,9 @@ class FlowMonitor:
             flow.response.usage = usage
             self.store.total_tokens_in += usage.input_tokens
             self.store.total_tokens_out += usage.output_tokens
+
+        # 持久化到 JSONL
+        self._write_flow_jsonl(flow)
     
     def fail_flow(self, flow_id: str, error_type: str, message: str, status_code: int = 0, raw: str = ""):
         """标记 Flow 失败"""
@@ -522,6 +528,9 @@ class FlowMonitor:
             status_code=status_code,
             raw=raw[:1000],  # 限制长度
         )
+
+        # 持久化到 JSONL
+        self._write_flow_jsonl(flow)
     
     def bookmark_flow(self, flow_id: str, bookmarked: bool = True):
         """书签 Flow"""
@@ -566,6 +575,80 @@ class FlowMonitor:
             return self.store.export_markdown(flows[0])
         else:
             return json.dumps([f.to_dict() for f in flows], ensure_ascii=False, indent=2)
+
+    def _write_flow_jsonl(self, flow: LLMFlow):
+        """将 Flow 写入 JSONL 日志文件"""
+        try:
+            from .settings import get_settings
+            settings = get_settings()
+            if not settings.logging.api_log_enabled:
+                return
+
+            log_dir = settings.logging.log_dir / "flows"
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            log_file = log_dir / f"{today}.jsonl"
+            max_chars = settings.logging.api_log_max_body_chars
+
+            # 构建精简的日志记录
+            record = {
+                "id": flow.id,
+                "timestamp": flow.timing.created_at,
+                "completed_at": flow.timing.completed_at,
+                "state": flow.state.value,
+                "protocol": flow.protocol,
+                "account_id": flow.account_id,
+                "account_name": flow.account_name,
+            }
+
+            # 时间信息
+            if flow.timing.ttfb_ms is not None:
+                record["ttfb_ms"] = round(flow.timing.ttfb_ms, 1)
+            if flow.timing.duration_ms is not None:
+                record["duration_ms"] = round(flow.timing.duration_ms, 1)
+
+            # 请求信息
+            if flow.request:
+                req_body = flow.request.body
+                req_body_str = json.dumps(req_body, ensure_ascii=False) if req_body else ""
+                if len(req_body_str) > max_chars:
+                    req_body_str = req_body_str[:max_chars] + "...(truncated)"
+
+                record["request"] = {
+                    "method": flow.request.method,
+                    "path": flow.request.path,
+                    "model": flow.request.model,
+                    "stream": flow.request.stream,
+                    "message_count": len(flow.request.messages),
+                    "has_tools": bool(flow.request.tools),
+                    "has_system": bool(flow.request.system),
+                    "body": req_body_str,
+                }
+
+            # 响应信息
+            if flow.response:
+                resp_content = flow.response.content or ""
+                if len(resp_content) > max_chars:
+                    resp_content = resp_content[:max_chars] + "...(truncated)"
+
+                record["response"] = {
+                    "status_code": flow.response.status_code,
+                    "content": resp_content,
+                    "stop_reason": flow.response.stop_reason,
+                    "chunk_count": flow.response.chunk_count,
+                    "tool_calls": flow.response.tool_calls,
+                    "usage": asdict(flow.response.usage) if flow.response.usage else None,
+                }
+
+            # 错误信息
+            if flow.error:
+                record["error"] = asdict(flow.error)
+
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"写入 Flow JSONL 日志失败: {e}")
 
 
 # 全局实例

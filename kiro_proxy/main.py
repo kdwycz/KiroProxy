@@ -14,6 +14,8 @@ from .config import MODELS_URL
 from .core import state, scheduler, stats_manager
 from .core import get_history_config, update_history_config, TruncateStrategy
 from .core.rate_limiter import get_rate_limiter
+from .core.settings import get_settings
+from .core.logger import logger, setup_logging
 from .handlers import anthropic, openai, gemini, admin
 from .handlers import responses as responses_handler
 from .web import get_html_page
@@ -29,6 +31,23 @@ def get_resource_path(relative_path: str) -> Path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 加载配置并初始化日志
+    settings = get_settings()
+    setup_logging(settings)
+
+    # 将配置应用到运行时
+    from . import config as _config
+    _config.QUOTA_COOLDOWN_SECONDS = settings.proxy.quota_cooldown_seconds
+    _config.WEB_SEARCH_ENABLED = settings.proxy.web_search_enabled
+
+    # 更新 FlowMonitor 容量
+    from .core.flow_monitor import flow_monitor as _fm
+    if settings.proxy.max_flows != _fm.store.max_flows:
+        _fm.store.max_flows = settings.proxy.max_flows
+        _fm.store.flows = __import__('collections').deque(_fm.store.flows, maxlen=settings.proxy.max_flows)
+
+    logger.info(f"配置已加载: proxy.quota_cooldown={settings.proxy.quota_cooldown_seconds}s, proxy.web_search={settings.proxy.web_search_enabled}")
+
     # 启动时
     await scheduler.start()
     yield
@@ -551,10 +570,10 @@ def run(port: int = 8080):
     import uvicorn
     from .core import state
     state.current_port = port  # 设置当前端口供 WebUI 显示
-    print(f"\n{'='*50}")
-    print(f"  Kiro API Proxy v{__version__}")
-    print(f"  http://localhost:{port}")
-    print(f"{'='*50}\n")
+    # 在 uvicorn 启动前先初始化日志（lifespan 中会再次调用，但 setup_logging 有幂等保护）
+    settings = get_settings()
+    setup_logging(settings)
+    logger.info(f"Kiro API Proxy v{__version__} starting on http://localhost:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 

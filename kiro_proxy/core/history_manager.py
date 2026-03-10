@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from collections import OrderedDict
 from enum import Enum
 
+from .logger import logger
+
 
 @dataclass
 class SummaryCacheEntry:
@@ -428,7 +430,7 @@ class HistoryManager:
             })
             result.extend(recent_history)
             if debug_label:
-                print(f"[HistoryManager] {debug_label}: {self.summarize_history_structure(result)}")
+                logger.debug(f"{debug_label}: {self.summarize_history_structure(result)}")
             return result
 
         summary_msg = {
@@ -442,7 +444,7 @@ class HistoryManager:
         })
         result.extend(recent_history)
         if debug_label:
-            print(f"[HistoryManager] {debug_label}: {self.summarize_history_structure(result)}")
+            logger.debug(f"{debug_label}: {self.summarize_history_structure(result)}")
         return result
     
     async def generate_summary(self, history: List[dict], api_caller: Callable) -> Optional[str]:
@@ -479,7 +481,7 @@ class HistoryManager:
                 summary = summary[:self.config.summary_max_length] + "..."
             return summary
         except Exception as e:
-            print(f"[HistoryManager] 生成摘要失败: {e}")
+            logger.error(f"生成摘要失败: {e}")
             return None
     
     async def compress_with_summary(

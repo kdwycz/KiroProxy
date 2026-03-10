@@ -3,7 +3,12 @@ from pathlib import Path
 
 KIRO_API_URL = "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
 MODELS_URL = "https://q.us-east-1.amazonaws.com/ListAvailableModels"
-TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-auth-token.json"
+
+# 默认 token 路径（优先项目目录下，回退到 ~/.aws/sso/cache）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_TOKEN_PATH = _PROJECT_ROOT / "data" / "tokens" / "kiro-auth-token.json"
+_HOME_TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-auth-token.json"
+TOKEN_PATH = _PROJECT_TOKEN_PATH if _PROJECT_TOKEN_PATH.exists() else _HOME_TOKEN_PATH
 
 # 配额管理配置
 QUOTA_COOLDOWN_SECONDS = 300  # 配额超限冷却时间（秒）

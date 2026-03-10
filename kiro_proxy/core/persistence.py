@@ -3,9 +3,12 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
-# 配置文件路径
-CONFIG_DIR = Path.home() / ".kiro-proxy"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+from .logger import logger
+
+# 配置文件路径（使用项目目录下的 data/ 目录）
+from .settings import PROJECT_ROOT
+CONFIG_DIR = PROJECT_ROOT / "data"
+CONFIG_FILE = CONFIG_DIR / "accounts.json"
 
 
 def ensure_config_dir():
@@ -23,7 +26,7 @@ def save_accounts(accounts: List[Dict[str, Any]]) -> bool:
             json.dump(config, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
-        print(f"[Persistence] 保存配置失败: {e}")
+        logger.error(f"保存配置失败: {e}")
         return False
 
 
@@ -40,7 +43,7 @@ def load_config() -> Dict[str, Any]:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
-        print(f"[Persistence] 加载配置失败: {e}")
+        logger.error(f"加载配置失败: {e}")
     return {}
 
 
@@ -52,7 +55,7 @@ def save_config(config: Dict[str, Any]) -> bool:
             json.dump(config, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
-        print(f"[Persistence] 保存配置失败: {e}")
+        logger.error(f"保存配置失败: {e}")
         return False
 
 

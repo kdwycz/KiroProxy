@@ -3,6 +3,8 @@ import asyncio
 from typing import Callable, Any, Optional, Set
 from functools import wraps
 
+from .logger import logger
+
 # 可重试的状态码
 RETRYABLE_STATUS_CODES: Set[int] = {
     408,  # Request Timeout
@@ -79,7 +81,7 @@ async def retry_async(
                 if on_retry:
                     on_retry(attempt + 1, e)
                 else:
-                    print(f"[Retry] 第 {attempt + 1} 次重试，延迟 {delay:.1f}s，错误: {type(e).__name__}")
+                    logger.info(f"第 {attempt + 1} 次重试，延迟 {delay:.1f}s，错误: {type(e).__name__}")
                 
                 await asyncio.sleep(delay)
             else:
@@ -113,5 +115,5 @@ class RetryableRequest:
     async def wait(self):
         """等待重试延迟"""
         delay = min(self.base_delay * (2 ** (self.attempt - 1)), 5.0)
-        print(f"[Retry] 第 {self.attempt} 次重试，延迟 {delay:.1f}s")
+        logger.info(f"第 {self.attempt} 次重试，延迟 {delay:.1f}s")
         await asyncio.sleep(delay)
