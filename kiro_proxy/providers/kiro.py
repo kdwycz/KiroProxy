@@ -1,7 +1,11 @@
 """Kiro Provider"""
 import json
+import re
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
+
+# Kiro API 总上下文窗口大小（tokens），用于从 contextUsagePercentage 计算 token 数
+TOTAL_CONTEXT_TOKENS = 172500
 
 from .base import BaseProvider
 from ..credential import (
@@ -115,11 +119,24 @@ class KiroProvider(BaseProvider):
         }
     
     def parse_response(self, raw: bytes) -> Dict[str, Any]:
-        """解析 AWS event-stream 格式响应"""
+        """解析 AWS event-stream 格式响应
+        
+        返回:
+            dict with keys:
+                content: list[str] — 文本片段
+                tool_uses: list[dict] — 工具调用
+                stop_reason: str — "end_turn" or "tool_use"
+                context_usage_percentage: float|None — 上下文使用百分比
+                input_tokens: int — 估算的输入 token 数
+                output_tokens: int — 估算的输出 token 数
+        """
         result = {
             "content": [],
             "tool_uses": [],
-            "stop_reason": "end_turn"
+            "stop_reason": "end_turn",
+            "context_usage_percentage": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
         }
         
         tool_input_buffer = {}
@@ -163,6 +180,10 @@ class KiroProvider(BaseProvider):
                     elif 'content' in payload and event_type != 'toolUseEvent':
                         result["content"].append(payload['content'])
                     
+                    # 捕获 contextUsagePercentage（通常在响应的最后一个事件中）
+                    if 'contextUsagePercentage' in payload:
+                        result["context_usage_percentage"] = payload['contextUsagePercentage']
+                    
                     if event_type == 'toolUseEvent' or 'toolUseId' in payload:
                         tool_id = payload.get('toolUseId', '')
                         tool_name = payload.get('name', '')
@@ -202,12 +223,57 @@ class KiroProvider(BaseProvider):
         if result["tool_uses"]:
             result["stop_reason"] = "tool_use"
         
+        # 计算 token 数
+        full_text = "".join(result["content"])
+        output_tokens = max(1, (len(full_text) + 3) // 4)  # 粗略估算
+        for tu in result["tool_uses"]:
+            output_tokens += (len(json.dumps(tu.get("input", {}))) + 3) // 4
+        result["output_tokens"] = output_tokens
+        
+        if result["context_usage_percentage"] is not None and result["context_usage_percentage"] > 0:
+            total_tokens = round(TOTAL_CONTEXT_TOKENS * result["context_usage_percentage"] / 100)
+            result["input_tokens"] = max(0, total_tokens - output_tokens)
+        
         return result
     
     def parse_response_text(self, raw: bytes) -> str:
         """解析响应，只返回文本内容"""
         result = self.parse_response(raw)
         return "".join(result["content"]) or "[No response]"
+    
+    @staticmethod
+    def parse_thinking_blocks(text: str) -> list:
+        """解析包含 <thinking> 标签的文本，拆分为 Anthropic 兼容的 content blocks
+        
+        Returns:
+            list of dicts, e.g.:
+            [{"type": "thinking", "thinking": "..."}, {"type": "text", "text": "..."}]
+        """
+        blocks = []
+        pattern = re.compile(r'<thinking>(.*?)</thinking>', re.DOTALL)
+        last_end = 0
+        
+        for match in pattern.finditer(text):
+            # 思考块之前的文本
+            before = text[last_end:match.start()].strip()
+            if before:
+                blocks.append({"type": "text", "text": before})
+            # 思考块
+            thinking_text = match.group(1).strip()
+            if thinking_text:
+                blocks.append({"type": "thinking", "thinking": thinking_text})
+            last_end = match.end()
+        
+        # 思考块之后的文本
+        after = text[last_end:].strip()
+        if after:
+            blocks.append({"type": "text", "text": after})
+        
+        # 如果没有 thinking 标签，返回原始文本
+        if not blocks:
+            blocks.append({"type": "text", "text": text})
+        
+        return blocks
     
     async def refresh_token(self) -> Tuple[bool, str]:
         """刷新 token"""

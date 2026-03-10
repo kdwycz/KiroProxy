@@ -21,7 +21,8 @@ from ..converters import (
     convert_anthropic_tools_to_kiro,
     convert_anthropic_messages_to_kiro,
     convert_kiro_response_to_anthropic,
-    extract_images_from_content
+    extract_images_from_content,
+    inject_thinking_system_prefix
 )
 
 
@@ -123,6 +124,11 @@ async def handle_messages(request: Request):
     system = body.get("system", "")
     stream = body.get("stream", False)
     tools = body.get("tools", [])
+    thinking_param = body.get("thinking")  # Anthropic thinking 参数
+    
+    # Thinking 模式：注入 system prompt 前缀
+    if thinking_param:
+        system = inject_thinking_system_prefix(system, thinking_param)
     
     # 调试：打印原始请求的关键信息
     print(f"[Anthropic] Request: model={body.get('model')} -> {model}, messages={len(messages)}, stream={stream}, tools={len(tools)}")
@@ -208,12 +214,12 @@ async def handle_messages(request: Request):
     kiro_request = build_kiro_request(user_content, model, history, kiro_tools, images, tool_results)
     
     if stream:
-        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
+        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param))
     else:
-        return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
+        return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param))
 
 
-async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
+async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
     """Handle streaming responses with auto-retry on quota exceeded and network errors."""
     
     async def generate():
@@ -284,6 +290,14 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         print(f"Tool results: {len(tool_results) if tool_results else 0}")
                         # 对于 400 错误，打印更多请求细节
                         if response.status_code == 400:
+                            print(f"Kiro request dumped to /tmp/kiro_400_request.json")
+                            try:
+                                import json
+                                with open("/tmp/kiro_400_request.json", "w", encoding="utf-8") as f:
+                                    json.dump(kiro_request, f, ensure_ascii=False, indent=2)
+                            except Exception as e:
+                                print(f"Dump error: {e}")
+
                             print(f"Kiro request keys: {list(kiro_request.keys())}")
                             if 'conversationState' in kiro_request:
                                 cs = kiro_request['conversationState']
@@ -407,7 +421,8 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":{i}}}\n\n'
 
                     stop_reason = result["stop_reason"]
-                    yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":100}}}}\n\n'
+                    output_tokens = result.get("output_tokens", 0)
+                    yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":{output_tokens}}}}}\n\n'
                     yield f'event: message_stop\ndata: {{"type":"message_stop"}}\n\n'
 
                     # 完成 Flow
@@ -481,7 +496,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
+async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
     """Handle non-streaming responses with auto-retry on quota exceeded and network errors."""
     error_msg = None
     status_code = 200
@@ -586,7 +601,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     )
 
                 should_log = True
-                return convert_kiro_response_to_anthropic(result, model, f"msg_{log_id}")
+                return convert_kiro_response_to_anthropic(result, model, f"msg_{log_id}", thinking_enabled=thinking_enabled)
 
         except HTTPException:
             should_log = True

@@ -14,9 +14,16 @@ import hashlib
 import re
 from typing import List, Dict, Any, Tuple, Optional
 
+from .config import WEB_SEARCH_ENABLED
+
 # 常量
 MAX_TOOLS = 50
 MAX_TOOL_DESCRIPTION_LENGTH = 500
+
+# Thinking 模式常量
+THINKING_MIN_BUDGET = 1024
+THINKING_MAX_BUDGET = 24576
+THINKING_DEFAULT_BUDGET = 10000
 
 
 def generate_session_id(messages: list) -> str:
@@ -114,7 +121,7 @@ def convert_anthropic_tools_to_kiro(tools: List[dict]) -> List[dict]:
     增强：
     - 限制最多 50 个工具
     - 截断过长的描述
-    - 支持 web_search 特殊工具
+    - web_search 工具根据 WEB_SEARCH_ENABLED 配置决定行为
     """
     kiro_tools = []
     function_count = 0
@@ -122,13 +129,15 @@ def convert_anthropic_tools_to_kiro(tools: List[dict]) -> List[dict]:
     for tool in tools:
         name = tool.get("name", "")
         
-        # 特殊工具：web_search
+        # web_search 工具处理
         if name in ("web_search", "web_search_20250305"):
-            kiro_tools.append({
-                "webSearchTool": {
-                    "type": "web_search"
-                }
-            })
+            if WEB_SEARCH_ENABLED:
+                kiro_tools.append({
+                    "webSearchTool": {
+                        "type": "web_search"
+                    }
+                })
+            # 未启用时直接跳过（过滤掉）
             continue
         
         # 限制工具数量
@@ -399,15 +408,31 @@ def convert_anthropic_messages_to_kiro(messages: List[dict], system="") -> Tuple
     return user_content, history, current_tool_results
 
 
-def convert_kiro_response_to_anthropic(result: dict, model: str, msg_id: str) -> dict:
-    """将 Kiro 响应转换为 Anthropic 格式"""
+def convert_kiro_response_to_anthropic(result: dict, model: str, msg_id: str, thinking_enabled: bool = False) -> dict:
+    """将 Kiro 响应转换为 Anthropic 格式
+    
+    Args:
+        thinking_enabled: 如果为 True，解析 <thinking> 块为 Anthropic thinking content blocks
+    """
+    from .providers.kiro import KiroProvider
+    
     content = []
     text = "".join(result["content"])
+    
     if text:
-        content.append({"type": "text", "text": text})
+        if thinking_enabled:
+            # 解析 <thinking> 块
+            blocks = KiroProvider.parse_thinking_blocks(text)
+            content.extend(blocks)
+        else:
+            content.append({"type": "text", "text": text})
     
     for tool_use in result["tool_uses"]:
         content.append(tool_use)
+    
+    # 使用 parse_response 计算的真实 token 数
+    input_tokens = result.get("input_tokens", 0)
+    output_tokens = result.get("output_tokens", 0)
     
     return {
         "id": msg_id,
@@ -417,7 +442,7 @@ def convert_kiro_response_to_anthropic(result: dict, model: str, msg_id: str) ->
         "model": model,
         "stop_reason": result["stop_reason"],
         "stop_sequence": None,
-        "usage": {"input_tokens": 100, "output_tokens": 100}
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}
     }
 
 
@@ -441,13 +466,15 @@ def convert_openai_tools_to_kiro(tools: List[dict]) -> List[dict]:
     for tool in tools:
         tool_type = tool.get("type", "function")
         
-        # 特殊工具
+        # web_search 工具处理
         if tool_type == "web_search":
-            kiro_tools.append({
-                "webSearchTool": {
-                    "type": "web_search"
-                }
-            })
+            if WEB_SEARCH_ENABLED:
+                kiro_tools.append({
+                    "webSearchTool": {
+                        "type": "web_search"
+                    }
+                })
+            # 未启用时直接跳过（过滤掉）
             continue
         
         if tool_type != "function":
@@ -475,6 +502,38 @@ def convert_openai_tools_to_kiro(tools: List[dict]) -> List[dict]:
         })
     
     return kiro_tools
+
+
+def inject_thinking_system_prefix(system: str, thinking_param: dict) -> str:
+    """将 Anthropic 的 thinking 参数转换为 Kiro system prompt 前缀
+    
+    Args:
+        system: 原始 system prompt
+        thinking_param: Anthropic thinking 参数, e.g. {"type": "enabled", "budget_tokens": 10000}
+    
+    Returns:
+        带 thinking 前缀的 system prompt
+    """
+    if not thinking_param:
+        return system
+    
+    thinking_type = thinking_param.get("type", "")
+    if thinking_type not in ("enabled", "adaptive"):
+        return system
+    
+    budget = thinking_param.get("budget_tokens", THINKING_DEFAULT_BUDGET)
+    budget = max(THINKING_MIN_BUDGET, min(THINKING_MAX_BUDGET, budget))
+    
+    if thinking_type == "enabled":
+        prefix = f"<thinking_mode>enabled</thinking_mode><max_thinking_length>{budget}</max_thinking_length>"
+    else:
+        # adaptive 模式
+        effort = thinking_param.get("thinking_effort", "high")
+        prefix = f"<thinking_mode>adaptive</thinking_mode><thinking_effort>{effort}</thinking_effort>"
+    
+    if system:
+        return f"{prefix}\n\n{system}"
+    return prefix
 
 
 def convert_openai_messages_to_kiro(

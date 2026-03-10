@@ -8,6 +8,9 @@ TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-auth-token.json"
 # 配额管理配置
 QUOTA_COOLDOWN_SECONDS = 300  # 配额超限冷却时间（秒）
 
+# web_search 工具配置（Kiro API 不支持 webSearchTool 格式，默认过滤）
+WEB_SEARCH_ENABLED = False
+
 # 模型映射（将外部模型名映射到 Kiro 支持的 5 个模型）
 # Kiro 支持: auto, claude-sonnet-4, claude-sonnet-4.5, claude-haiku-4.5, claude-opus-4.5
 MODEL_MAPPING = {
@@ -37,10 +40,12 @@ MODEL_MAPPING = {
     "gpt-5.4": "claude-opus-4.5",
     "gpt-5.3-codex": "claude-sonnet-4.5",
     "gpt-5.3-codex-spark": "claude-sonnet-4.5",
+    "gpt-5.2": "claude-sonnet-4.5",
     "gpt-5.2-codex": "claude-sonnet-4.5",
     "gpt-5.1": "claude-sonnet-4.5",
     "gpt-5.1-codex": "claude-sonnet-4.5",
     "gpt-5.1-codex-max": "claude-opus-4.5",
+    "gpt-5": "claude-sonnet-4",
     "gpt-5-codex": "claude-sonnet-4",
     "gpt-5-codex-mini": "claude-haiku-4.5",
 
