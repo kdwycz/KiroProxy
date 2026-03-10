@@ -274,7 +274,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
         while retry_count <= max_retries:
             try:
                 async with curl_requests.AsyncSession(verify=False, timeout=300) as client:
-                    response = await client.post(KIRO_API_URL, content=json.dumps(kiro_request), headers=headers, stream=True)
+                    response = await client.post(KIRO_API_URL, data=json.dumps(kiro_request), headers=headers, stream=True)
                         
                     # 处理配额超限
                     if response.status_code == 429 or is_quota_exceeded_error(response.status_code, ""):
