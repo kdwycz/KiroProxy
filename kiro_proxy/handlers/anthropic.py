@@ -219,6 +219,48 @@ async def handle_messages(request: Request):
         return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param))
 
 
+
+def _extract_stream_content(buffer: bytes, parse_pos: int) -> tuple:
+    """从 AWS event-stream 累积缓冲区中提取文本内容
+    
+    独立于 generate() 生成器函数，避免 Python 3.12+ 中
+    json= 关键字参数导致的作用域冲突。
+    
+    Returns:
+        (results, new_parse_pos)
+        results: list of (content_str, json_escaped_str)
+    """
+    results = []
+    
+    while parse_pos < len(buffer):
+        if parse_pos + 12 > len(buffer):
+            break
+        total_len = int.from_bytes(buffer[parse_pos:parse_pos+4], 'big')
+        if total_len == 0 or total_len > len(buffer) - parse_pos:
+            break
+        headers_len = int.from_bytes(buffer[parse_pos+4:parse_pos+8], 'big')
+        payload_start = parse_pos + 12 + headers_len
+        payload_end = parse_pos + total_len - 4
+
+        if payload_start < payload_end:
+            try:
+                payload = json.loads(buffer[payload_start:payload_end].decode('utf-8'))
+                content = None
+                if 'assistantResponseEvent' in payload:
+                    content = payload['assistantResponseEvent'].get('content')
+                elif 'content' in payload:
+                    header_str = buffer[parse_pos+12:parse_pos+12+headers_len].decode('utf-8', errors='ignore')
+                    if 'toolUseEvent' not in header_str:
+                        content = payload['content']
+                if content:
+                    results.append((content, json.dumps(content)))
+            except Exception:
+                pass
+        parse_pos += total_len
+    
+    return results, parse_pos
+
+
 async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
     """Handle streaming responses with auto-retry on quota exceeded and network errors."""
     
@@ -375,40 +417,18 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                     yield f'event: ping\ndata: {{"type":"ping"}}\n\n'
 
                     full_response = b""
+                    parse_pos = 0
 
                     async for chunk in response.aiter_content():
                         full_response += chunk
 
-                        try:
-                            pos = 0
-                            while pos < len(chunk):
-                                if pos + 12 > len(chunk):
-                                    break
-                                total_len = int.from_bytes(chunk[pos:pos+4], 'big')
-                                if total_len == 0 or total_len > len(chunk) - pos:
-                                    break
-                                headers_len = int.from_bytes(chunk[pos+4:pos+8], 'big')
-                                payload_start = pos + 12 + headers_len
-                                payload_end = pos + total_len - 4
-
-                                if payload_start < payload_end:
-                                    try:
-                                        payload = json.loads(chunk[payload_start:payload_end].decode('utf-8'))
-                                        content = None
-                                        if 'assistantResponseEvent' in payload:
-                                            content = payload['assistantResponseEvent'].get('content')
-                                        elif 'content' in payload:
-                                            content = payload['content']
-                                        if content:
-                                            full_content += content
-                                            if flow_id:
-                                                flow_monitor.add_chunk(flow_id, content)
-                                            yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{json.dumps(content)}}}}}\n\n'
-                                    except Exception:
-                                        pass
-                                pos += total_len
-                        except Exception:
-                            pass
+                        # 从累积缓冲区提取新的完整帧
+                        extracted, parse_pos = _extract_stream_content(full_response, parse_pos)
+                        for content, content_json in extracted:
+                            full_content += content
+                            if flow_id:
+                                flow_monitor.add_chunk(flow_id, content)
+                            yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{content_json}}}}}\n\n'
 
                     result = parse_event_stream_full(full_response)
 
