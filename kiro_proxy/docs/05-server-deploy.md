@@ -4,9 +4,8 @@
 
 ## 目录
 
-- [方式一：预编译二进制（推荐）](#方式一预编译二进制推荐)
-- [方式二：从源码运行](#方式二从源码运行)
-- [方式三：Docker 部署](#方式三docker-部署)
+- [从源码运行](#从源码运行)
+- [Docker 部署](#docker-部署)
 - [账号配置](#账号配置)
 - [开机自启配置](#开机自启配置)
 - [反向代理配置](#反向代理配置)
@@ -14,159 +13,38 @@
 
 ---
 
-## 方式一：预编译二进制（推荐）
+## 从源码运行
 
-最简单的方式，不需要安装任何依赖。
+需要 Python ≥ 3.14 和 [uv](https://docs.astral.sh/uv/)。
 
-### Linux (x86_64)
-
-```bash
-# 下载最新版本
-wget https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-linux-x86_64
-
-# 添加执行权限
-chmod +x KiroProxy-1.7.1-linux-x86_64
-
-# 运行
-./KiroProxy-1.7.1-linux-x86_64
-
-# 指定端口
-./KiroProxy-1.7.1-linux-x86_64 8081
-```
-
-**使用 curl 下载：**
+### 安装 uv
 
 ```bash
-curl -LO https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-linux-x86_64
-chmod +x KiroProxy-1.7.1-linux-x86_64
-./KiroProxy-1.7.1-linux-x86_64
+# Linux / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
-
-**Debian/Ubuntu 使用 deb 包：**
-
-```bash
-wget https://github.com/petehsu/KiroProxy/releases/latest/download/kiroproxy_1.7.1_amd64.deb
-sudo dpkg -i kiroproxy_1.7.1_amd64.deb
-
-# 运行
-KiroProxy
-```
-
-**Fedora/RHEL/CentOS 使用 rpm 包：**
-
-```bash
-wget https://github.com/petehsu/KiroProxy/releases/latest/download/kiroproxy-1.7.1-1.x86_64.rpm
-sudo rpm -i kiroproxy-1.7.1-1.x86_64.rpm
-
-# 运行
-KiroProxy
-```
-
-### macOS
-
-```bash
-# Intel Mac
-curl -LO https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-macos-x86_64
-chmod +x KiroProxy-1.7.1-macos-x86_64
-./KiroProxy-1.7.1-macos-x86_64
-
-# 如果提示无法验证开发者，运行：
-xattr -d com.apple.quarantine KiroProxy-1.7.1-macos-x86_64
-```
-
-### Windows
-
-```powershell
-# PowerShell 下载
-Invoke-WebRequest -Uri "https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-windows-x86_64.exe" -OutFile "KiroProxy.exe"
-
-# 运行
-.\KiroProxy.exe
-
-# 指定端口
-.\KiroProxy.exe 8081
-```
-
----
-
-## 方式二：从源码运行
-
-需要 Python 3.9+ 和 Git。
-
-### 安装 Git（如果没有）
-
-**Ubuntu/Debian：**
-```bash
-sudo apt update
-sudo apt install git -y
-```
-
-**CentOS/RHEL/Fedora：**
-```bash
-sudo yum install git -y
-# 或
-sudo dnf install git -y
-```
-
-**macOS：**
-```bash
-# 安装 Xcode Command Line Tools
-xcode-select --install
-# 或使用 Homebrew
-brew install git
-```
-
-**Windows：**
-从 https://git-scm.com/download/win 下载安装
-
-### 安装 Python（如果没有）
-
-**Ubuntu/Debian：**
-```bash
-sudo apt update
-sudo apt install python3 python3-pip python3-venv -y
-```
-
-**CentOS/RHEL 8+：**
-```bash
-sudo dnf install python39 python39-pip -y
-```
-
-**Fedora：**
-```bash
-sudo dnf install python3 python3-pip -y
-```
-
-**macOS：**
-```bash
-brew install python@3.11
-```
-
-**Windows：**
-从 https://www.python.org/downloads/ 下载安装，勾选 "Add to PATH"
 
 ### 克隆并运行
 
 ```bash
 # 克隆项目
-git clone https://github.com/petehsu/KiroProxy.git
+git clone https://github.com/your-username/KiroProxy.git
 cd KiroProxy
 
-# 创建虚拟环境（推荐）
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
-# 运行
-python run.py
+# 运行（默认端口 8080）
+uv run python run.py
 
 # 指定端口
-python run.py 8081
+uv run python run.py 9090
 
-# 或使用 CLI
-python run.py serve -p 8081
+# 使用 CLI
+uv run python run.py serve -p 8081
 ```
 
 ### 更新到最新版本
@@ -174,49 +52,47 @@ python run.py serve -p 8081
 ```bash
 cd KiroProxy
 git pull origin main
-pip install -r requirements.txt
+uv sync
 ```
 
 ---
 
-## 方式三：Docker 部署
+## Docker 部署
 
-### 使用 Dockerfile
-
-创建 `Dockerfile`：
+### Dockerfile
 
 ```dockerfile
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
-# 安装依赖
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装 uv
+RUN pip install uv
 
-# 复制代码
+# 复制项目文件
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev
+
 COPY . .
 
 # 暴露端口
 EXPOSE 8080
 
 # 数据目录
-VOLUME ["/root/.config/kiro-proxy"]
+VOLUME ["/app/data"]
 
 # 启动
-CMD ["python", "run.py"]
+CMD ["uv", "run", "python", "run.py"]
 ```
 
 构建并运行：
 
 ```bash
 docker build -t kiro-proxy .
-docker run -d -p 8080:8080 -v kiro-data:/root/.config/kiro-proxy --name kiro-proxy kiro-proxy
+docker run -d -p 8080:8080 -v kiro-data:/app/data --name kiro-proxy kiro-proxy
 ```
 
 ### Docker Compose
-
-创建 `docker-compose.yml`：
 
 ```yaml
 version: '3'
@@ -226,14 +102,9 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - kiro-data:/root/.config/kiro-proxy
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  kiro-data:
 ```
-
-运行：
 
 ```bash
 docker-compose up -d
@@ -259,16 +130,16 @@ docker-compose up -d
 **本地电脑：**
 ```bash
 # 运行 KiroProxy 并登录
-python run.py
+uv run python run.py
 
 # 导出账号
-python run.py accounts export -o accounts.json
+uv run python run.py accounts export -o accounts.json
 ```
 
 **服务器：**
 ```bash
 # 上传 accounts.json 到服务器后导入
-python run.py accounts import accounts.json
+uv run python run.py accounts import accounts.json
 
 # 或使用 curl
 curl -X POST http://localhost:8080/api/accounts/import \
@@ -285,7 +156,7 @@ curl -X POST http://localhost:8080/api/accounts/import \
 **服务器上：**
 ```bash
 # 交互式添加
-python run.py accounts add
+uv run python run.py accounts add
 
 # 或使用 API
 curl -X POST http://localhost:8080/api/accounts/manual \
@@ -302,7 +173,7 @@ curl -X POST http://localhost:8080/api/accounts/manual \
 如果服务器上安装了 Kiro IDE 并已登录：
 
 ```bash
-python run.py accounts scan --auto
+uv run python run.py accounts scan --auto
 ```
 
 ---
@@ -321,8 +192,8 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/kiro-proxy
-ExecStart=/opt/kiro-proxy/KiroProxy
+WorkingDirectory=/opt/KiroProxy
+ExecStart=/root/.local/bin/uv run python run.py
 Restart=always
 RestartSec=10
 
@@ -330,31 +201,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-**使用预编译二进制：**
 ```bash
-# 创建目录并下载
-sudo mkdir -p /opt/kiro-proxy
-sudo wget -O /opt/kiro-proxy/KiroProxy https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-linux-x86_64
-sudo chmod +x /opt/kiro-proxy/KiroProxy
-
-# 创建服务文件
-sudo tee /etc/systemd/system/kiro-proxy.service << 'EOF'
-[Unit]
-Description=Kiro API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/kiro-proxy
-ExecStart=/opt/kiro-proxy/KiroProxy
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 # 启用并启动
 sudo systemctl daemon-reload
 sudo systemctl enable kiro-proxy
@@ -365,41 +212,17 @@ sudo systemctl status kiro-proxy
 
 # 查看日志
 sudo journalctl -u kiro-proxy -f
+# 或查看文件日志
+tail -f /opt/KiroProxy/data/logs/kiro-proxy.log
 ```
 
-**使用源码运行：**
-```bash
-sudo tee /etc/systemd/system/kiro-proxy.service << 'EOF'
-[Unit]
-Description=Kiro API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/KiroProxy
-ExecStart=/opt/KiroProxy/venv/bin/python run.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-### Linux (使用 screen/tmux)
+### Linux (screen / tmux)
 
 **screen：**
 ```bash
-# 安装
-sudo apt install screen  # Debian/Ubuntu
-sudo yum install screen  # CentOS
-
-# 创建会话并运行
 screen -S kiro
-./KiroProxy
-
-# 按 Ctrl+A D 退出会话（程序继续运行）
+uv run python run.py
+# Ctrl+A D 退出会话（程序继续运行）
 
 # 重新连接
 screen -r kiro
@@ -407,121 +230,21 @@ screen -r kiro
 
 **tmux：**
 ```bash
-# 安装
-sudo apt install tmux  # Debian/Ubuntu
-sudo yum install tmux  # CentOS
-
-# 创建会话并运行
 tmux new -s kiro
-./KiroProxy
-
-# 按 Ctrl+B D 退出会话
+uv run python run.py
+# Ctrl+B D 退出会话
 
 # 重新连接
 tmux attach -t kiro
 ```
 
-### Linux (使用 nohup)
+### Linux (nohup)
 
 ```bash
-# 后台运行
-nohup ./KiroProxy > kiro.log 2>&1 &
-
-# 查看日志
-tail -f kiro.log
-
-# 停止
-pkill -f KiroProxy
+nohup uv run python run.py > /dev/null 2>&1 &
+# 日志已自动写入 data/logs/kiro-proxy.log
+tail -f data/logs/kiro-proxy.log
 ```
-
-### macOS (launchd)
-
-创建 `~/Library/LaunchAgents/com.kiro.proxy.plist`：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.kiro.proxy</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/KiroProxy</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/kiro-proxy.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/kiro-proxy.err</string>
-</dict>
-</plist>
-```
-
-```bash
-# 加载服务
-launchctl load ~/Library/LaunchAgents/com.kiro.proxy.plist
-
-# 启动
-launchctl start com.kiro.proxy
-
-# 停止
-launchctl stop com.kiro.proxy
-
-# 卸载
-launchctl unload ~/Library/LaunchAgents/com.kiro.proxy.plist
-```
-
-### Windows (任务计划程序)
-
-**方法一：使用 PowerShell 创建计划任务**
-
-```powershell
-# 创建计划任务（开机自启）
-$action = New-ScheduledTaskAction -Execute "C:\KiroProxy\KiroProxy.exe"
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
-Register-ScheduledTask -TaskName "KiroProxy" -Action $action -Trigger $trigger -Principal $principal
-
-# 立即启动
-Start-ScheduledTask -TaskName "KiroProxy"
-
-# 停止
-Stop-ScheduledTask -TaskName "KiroProxy"
-
-# 删除
-Unregister-ScheduledTask -TaskName "KiroProxy" -Confirm:$false
-```
-
-**方法二：使用 NSSM 创建 Windows 服务**
-
-1. 下载 NSSM: https://nssm.cc/download
-2. 解压并运行：
-
-```cmd
-nssm install KiroProxy C:\KiroProxy\KiroProxy.exe
-nssm start KiroProxy
-
-# 停止
-nssm stop KiroProxy
-
-# 删除
-nssm remove KiroProxy confirm
-```
-
-**方法三：创建 VBS 启动脚本**
-
-创建 `start-kiro.vbs`：
-
-```vbscript
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "C:\KiroProxy\KiroProxy.exe", 0, False
-```
-
-将此文件放入启动文件夹：`shell:startup`
 
 ---
 
@@ -552,7 +275,7 @@ server {
 }
 ```
 
-**启用 HTTPS（使用 Certbot）：**
+**启用 HTTPS：**
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
@@ -569,21 +292,6 @@ kiro.example.com {
 
 Caddy 会自动申请和续期 HTTPS 证书。
 
-### Apache
-
-```apache
-<VirtualHost *:80>
-    ServerName kiro.example.com
-    
-    ProxyPreserveHost On
-    ProxyPass / http://127.0.0.1:8080/
-    ProxyPassReverse / http://127.0.0.1:8080/
-    
-    # SSE 支持
-    SetEnv proxy-sendchunked 1
-</VirtualHost>
-```
-
 ---
 
 ## 常见问题
@@ -596,64 +304,38 @@ lsof -i :8080  # Linux/macOS
 netstat -ano | findstr :8080  # Windows
 
 # 使用其他端口
-./KiroProxy 8081
+uv run python run.py 8081
 ```
 
 ### 防火墙配置
 
-**Ubuntu/Debian (ufw)：**
 ```bash
+# Ubuntu/Debian (ufw)
 sudo ufw allow 8080/tcp
-```
 
-**CentOS/RHEL (firewalld)：**
-```bash
+# CentOS/RHEL (firewalld)
 sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
-```
-
-**Windows：**
-```powershell
-New-NetFirewallRule -DisplayName "KiroProxy" -Direction Inbound -Port 8080 -Protocol TCP -Action Allow
-```
-
-### 权限问题
-
-```bash
-# 如果遇到权限问题
-chmod +x KiroProxy
-sudo chown -R $USER:$USER /opt/kiro-proxy
 ```
 
 ### 查看日志
 
 ```bash
-# systemd
-sudo journalctl -u kiro-proxy -f
+# 应用日志
+tail -f data/logs/kiro-proxy.log
 
-# 直接运行时
-./KiroProxy 2>&1 | tee kiro.log
+# API 调用记录
+cat data/logs/flows/$(date +%Y-%m-%d).jsonl | python -m json.tool
+
+# systemd 日志
+sudo journalctl -u kiro-proxy -f
 ```
 
 ### 更新版本
 
-**预编译二进制：**
-```bash
-# 停止服务
-sudo systemctl stop kiro-proxy
-
-# 下载新版本
-sudo wget -O /opt/kiro-proxy/KiroProxy https://github.com/petehsu/KiroProxy/releases/latest/download/KiroProxy-1.7.1-linux-x86_64
-sudo chmod +x /opt/kiro-proxy/KiroProxy
-
-# 启动服务
-sudo systemctl start kiro-proxy
-```
-
-**源码方式：**
 ```bash
 cd /opt/KiroProxy
 git pull origin main
-pip install -r requirements.txt
+uv sync
 sudo systemctl restart kiro-proxy
 ```

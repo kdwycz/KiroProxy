@@ -1,6 +1,6 @@
 [project]
 name = "kiroproxy"
-version = "1.7.16"
+version = "1.8.0"
 description = "Kiro API Proxy - 将 Kiro API 转换为 OpenAI/Anthropic/Gemini 兼容格式"
 requires-python = ">=3.14"
 dependencies = [

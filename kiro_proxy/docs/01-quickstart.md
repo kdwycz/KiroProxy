@@ -1,39 +1,39 @@
 # 快速开始
 
+## 环境要求
+
+- **Python** ≥ 3.14
+- **[uv](https://docs.astral.sh/uv/)** — Python 包管理器
+
 ## 安装运行
-
-### 方式一：下载预编译版本
-
-从 [Releases](https://github.com/yourname/kiro-proxy/releases) 下载对应平台的安装包：
-
-- **Windows**: `kiro-proxy-windows.zip`
-- **macOS**: `kiro-proxy-macos.zip`
-- **Linux**: `kiro-proxy-linux.tar.gz`
-
-解压后双击运行即可。
-
-### 方式二：从源码运行
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourname/kiro-proxy.git
-cd kiro-proxy
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+git clone https://github.com/your-username/KiroProxy.git
+cd KiroProxy
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
 # 运行（默认端口 8080）
-python run.py
+uv run python run.py
 
 # 指定端口
-python run.py 8081
+uv run python run.py 9090
+
+# 或使用 CLI serve 命令
+uv run python run.py serve -p 8081
 ```
 
 启动成功后，访问 http://localhost:8080 打开管理界面。
+
+### 更新到最新版本
+
+```bash
+cd KiroProxy
+git pull origin main
+uv sync
+```
 
 ---
 
@@ -126,7 +126,7 @@ Kiro 支持以下模型，你可以使用 Kiro 原生名称或映射名称：
 
 | Kiro 模型 | 能力 | 可用名称（任选其一） |
 |-----------|------|---------------------|
-| `claude-sonnet-4` | ⭐⭐⭐ 推荐，性价比最高 | `gpt-4o`, `gpt-4`, `gpt-4-turbo`, `claude-3-5-sonnet-20241022`, `claude-3-5-sonnet-latest`, `sonnet` |
+| `claude-sonnet-4` | ⭐⭐⭐ 推荐，性价比最高 | `gpt-4o`, `gpt-4`, `gpt-4-turbo`, `claude-3-5-sonnet-20241022`, `sonnet` |
 | `claude-sonnet-4.5` | ⭐⭐⭐⭐ 更强，适合复杂任务 | `gemini-1.5-pro` |
 | `claude-haiku-4.5` | ⚡ 快速，适合简单任务 | `gpt-4o-mini`, `gpt-3.5-turbo`, `claude-3-5-haiku-20241022`, `haiku` |
 | `claude-opus-4.5` | ⭐⭐⭐⭐⭐ 最强，适合高难度任务 | `o1`, `o1-preview`, `claude-3-opus-20240229`, `opus` |
@@ -135,7 +135,7 @@ Kiro 支持以下模型，你可以使用 Kiro 原生名称或映射名称：
 ### 各客户端推荐配置
 
 | 客户端 | 推荐模型名 | 实际使用 |
-|--------|-----------|---------|
+|--------|-----------|---------| 
 | Claude Code | `claude-sonnet-4` 或 `claude-sonnet-4.5` | 直接使用 Kiro 模型名 |
 | Codex CLI | `gpt-4o` | 映射到 claude-sonnet-4 |
 | Gemini CLI | `gemini-1.5-pro` | 映射到 claude-sonnet-4.5 |

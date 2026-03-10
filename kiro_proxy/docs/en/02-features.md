@@ -142,11 +142,18 @@ Proxy has built-in strategies to handle this:
 
 ### Auto Save
 
-Account configuration auto-saves to `~/.kiro-proxy/config.json`:
+Account configuration auto-saves to `data/accounts.json`:
 
 - Account list and states
 - Enable/disable settings
 - Token file paths
+
+Application settings are saved in `data/settings.toml` — port, rate limits, Sentry DSN, log level, etc.
+
+### Logs
+
+- Application logs: `data/logs/kiro-proxy.log` (daily rotation, 30 days retention)
+- API call records: `data/logs/flows/YYYY-MM-DD.jsonl`
 
 ### Restart Recovery
 

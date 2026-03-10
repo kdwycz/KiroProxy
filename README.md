@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/icon.svg" width="80" height="96" alt="Kiro Proxy">
-</p>
-
 <h1 align="center">Kiro API Proxy</h1>
 
 <p align="center">
@@ -11,9 +7,10 @@
 <p align="center">
   <a href="#功能特性">功能</a> •
   <a href="#快速开始">快速开始</a> •
-  <a href="#cli-配置">CLI 配置</a> •
+  <a href="#配置">配置</a> •
   <a href="#api-端点">API</a> •
-  <a href="#许可证">许可证</a>
+  <a href="#许可证">许可证</a> •
+  <a href="#免责声明">免责声明</a>
 </p>
 
 <p align="center">
@@ -22,88 +19,96 @@
 
 ---
 
-> **⚠️ 测试说明**
-> 
+> **⚠️ 说明**
+>
 > 本项目支持 **Claude Code**、**Codex CLI**、**Gemini CLI** 三种客户端，工具调用功能已全面支持。
 
 ## 功能特性
 
 ### 核心功能
-- **多协议支持** - OpenAI / Anthropic / Gemini 三种协议兼容
-- **完整工具调用** - 三种协议的工具调用功能全面支持
-- **图片理解** - 支持 Claude Code / Codex CLI 图片输入
-- **网络搜索** - 支持 Claude Code / Codex CLI 网络搜索工具
-- **多账号轮询** - 支持添加多个 Kiro 账号，自动负载均衡
-- **会话粘性** - 同一会话 60 秒内使用同一账号，保持上下文
-- **Web UI** - 简洁的管理界面，支持监控、日志、设置
-- **多语言界面** - 支持中文和英文界面切换
+- **多协议支持** — OpenAI / Anthropic / Gemini 三种协议兼容
+- **完整工具调用** — 三种协议的工具调用功能全面支持
+- **图片理解** — 支持 Claude Code / Codex CLI 图片输入
+- **网络搜索** — 支持 Claude Code / Codex CLI 网络搜索工具
+- **多账号轮询** — 支持添加多个 Kiro 账号，自动负载均衡
+- **会话粘性** — 同一会话 60 秒内使用同一账号，保持上下文
+- **Web UI** — 简洁的管理界面，支持监控、日志、设置
+- **多语言界面** — 支持中文和英文界面切换
 
-### v1.7.2 新功能
-- **多语言支持** - WebUI 完整支持中英文切换
-- **双语启动器** - 端口/语言设置，清晰的启动按钮
-- **英文帮助文档** - 全部 5 篇文档已翻译为英文
+### 日志与监控
+- **结构化日志** — 基于 loguru，控制台彩色输出 + 文件日志轮转
+- **API 调用持久化** — JSONL 格式记录完整请求/响应（`data/logs/flows/`）
+- **Sentry 集成** — 可选的 Sentry 错误追踪（ERROR+ 级别自动上报）
 
-### v1.7.1 新功能
-- **Windows 支持补强** - 注册表浏览器检测 + PATH 回退，兼容便携版
-- **打包资源修复** - PyInstaller 打包后可正常加载图标与内置文档
-- **Token 扫描稳定性** - Windows 路径编码处理修复
+### 配置管理
+- **TOML 配置文件** — `data/settings.toml`，首次启动自动生成默认配置
+- **配置项** — 端口、限速、Sentry DSN、日志级别 / 轮转 / 保留天数等
 
-### v1.6.3 新功能
-- **命令行工具 (CLI)** - 无 GUI 服务器也能轻松管理
-  - `python run.py accounts list` - 列出账号
-  - `python run.py accounts export/import` - 导出/导入账号
-  - `python run.py accounts add` - 交互式添加 Token
-  - `python run.py accounts scan` - 扫描本地 Token
-  - `python run.py login google/github` - 命令行登录
-  - `python run.py login remote` - 生成远程登录链接
-- **远程登录链接** - 在有浏览器的机器上完成授权，Token 自动同步
-- **账号导入导出** - 跨机器迁移账号配置
-- **手动添加 Token** - 直接粘贴 accessToken/refreshToken
+### 历史消息管理
+- **自动截断** — 优先保留最新上下文并摘要前文，必要时按数量/字符数截断
+- **智能摘要** — 用 AI 生成早期对话摘要，保留关键信息（带缓存）
+- **错误重试** — 遇到长度错误时自动截断重试（默认启用）
+- **预估检测** — 预估 token 数量，超限预先截断
 
-### v1.6.2 新功能
-- **Codex CLI 完整支持** - 使用 OpenAI Responses API (`/v1/responses`)
-  - 完整工具调用支持（shell、file 等所有工具）
-  - 图片输入支持（`input_image` 类型）
-  - 网络搜索支持（`web_search` 工具）
-  - 错误代码映射（rate_limit、context_length 等）
-- **Claude Code 增强** - 图片理解和网络搜索完整支持
-  - 支持 Anthropic 和 OpenAI 两种图片格式
-  - 支持 `web_search` / `web_search_20250305` 工具
+## 更新日志
 
-### v1.6.1 新功能
-- **请求限速** - 通过限制请求频率降低账号封禁风险
-  - 每账号最小请求间隔
-  - 每账号每分钟最大请求数
-  - 全局每分钟最大请求数
-  - WebUI 设置页面可配置
-- **账号封禁检测** - 自动检测 TEMPORARILY_SUSPENDED 错误
-  - 友好的错误日志输出
-  - 自动禁用被封禁账号
-  - 自动切换到其他可用账号
-- **统一错误处理** - 三种协议使用统一的错误分类和处理
+### v1.8.0
+- **持久化日志系统** — 基于 loguru，替换全部 print() 调用
+  - 控制台彩色输出 + 文件日志每日轮转（`data/logs/kiro-proxy.log`）
+  - API 调用 JSONL 持久化，记录完整请求/响应（`data/logs/flows/`）
+- **Sentry 集成** — 可选的错误追踪，ERROR+ 级别自动上报
+- **TOML 配置文件** — `data/settings.toml`，首次启动自动生成默认配置
+  - 支持端口、限速、Sentry DSN、日志级别/轮转/保留天数等
+- **运行时数据统一** — 配置、日志、凭证统一存放在项目 `data/` 目录下
+- **kiro-account-manager 导入** — 支持导入 kiro-account-manager 格式的账号
+- **模型映射更新** — 新增 claude-opus-4.6 模型，claude-opus-4.6 回退到 claude-opus-4.5（Kiro 免费版暂不支持 4.6）
+- **精确 Token 统计** — 从 event-stream 提取 contextUsagePercentage，计算真实 input/output tokens
+- **Thinking 模式** — 支持 Anthropic thinking 参数，自动转为 system prompt 前缀并解析 `<thinking>` 标签
+- **web_search 可配置** — 新增 `web_search_enabled` 配置项，默认关闭（Kiro API 不支持 webSearchTool 格式）
+- **流式响应修复** — 修复 Python 3.14 作用域冲突 + 缓冲区增量解析，解决流式内容提取为空的问题
+- **httpx → curl-cffi** — 全面替换 HTTP 库
+- **项目清理** — 移除 tkinter 启动器、PyInstaller 兼容代码和无用文件
+- **构建系统** — 添加 `[build-system]`，支持 `uv sync` 安装 CLI 入口点
+- **调试工具** — 抓包/测试脚本整理到 `scripts/` 目录
+- **文档更新** — README、快速开始、部署指南全面更新
 
-### v1.6.0 功能
-- **历史消息管理** - 4 种策略处理对话长度限制，可自由组合
-  - 自动截断：发送前优先保留最新上下文并摘要前文，必要时按数量/字符数截断
-  - 智能摘要：用 AI 生成早期对话摘要，保留关键信息
-  - 摘要缓存：历史变化不大时复用最近摘要，减少重复 LLM 调用（默认启用）
-  - 错误重试：遇到长度错误时自动截断重试（默认启用）
-  - 预估检测：预估 token 数量，超限预先截断
-- **Gemini 工具调用** - 完整支持 functionDeclarations/functionCall/functionResponse
-- **设置页面** - WebUI 新增设置标签页，可配置历史消息管理策略
+### v1.7.2
+- **多语言支持** — WebUI 完整支持中英文切换
+- **英文帮助文档** — 全部 5 篇文档已翻译为英文
 
-### v1.5.0 功能
-- **用量查询** - 查询账号配额使用情况，显示已用/余额/使用率
-- **多登录方式** - 支持 Google / GitHub / AWS Builder ID 三种登录方式
-- **流量监控** - 完整的 LLM 请求监控，支持搜索、过滤、导出
-- **浏览器选择** - 自动检测已安装浏览器，支持无痕模式
-- **文档中心** - 内置帮助文档，左侧目录 + 右侧 Markdown 渲染
+### v1.6.3
+- **命令行工具 (CLI)** — 无 GUI 服务器也能轻松管理
+  - `accounts list/export/import/add/scan` — 账号管理
+  - `login google/github/remote` — 登录
+- **远程登录链接** — 在有浏览器的机器上完成授权，Token 自动同步
+- **账号导入导出** — 跨机器迁移账号配置
 
-### v1.4.0 功能
-- **Token 预刷新** - 后台每 5 分钟检查，提前 15 分钟自动刷新
-- **健康检查** - 每 10 分钟检测账号可用性，自动标记状态
-- **请求统计增强** - 按账号/模型统计，24 小时趋势
-- **请求重试机制** - 网络错误/5xx 自动重试，指数退避
+### v1.6.2
+- **Codex CLI 完整支持** — OpenAI Responses API (`/v1/responses`)
+  - 完整工具调用、图片输入、网络搜索、错误代码映射
+- **Claude Code 增强** — 图片理解和网络搜索完整支持
+
+### v1.6.1
+- **请求限速** — 每账号最小请求间隔、每分钟最大请求数
+- **账号封禁检测** — 自动检测并禁用被封禁账号
+- **统一错误处理** — 三种协议使用统一的错误分类
+
+### v1.6.0
+- **历史消息管理** — 4 种策略处理对话长度限制
+- **Gemini 工具调用** — 完整支持 functionDeclarations
+- **设置页面** — WebUI 新增设置标签页
+
+### v1.5.0
+- **用量查询** — 查询账号配额使用情况
+- **多登录方式** — Google / GitHub / AWS Builder ID
+- **流量监控** — 完整的 LLM 请求监控
+- **浏览器选择** — 自动检测已安装浏览器，支持无痕模式
+- **文档中心** — 内置帮助文档
+
+### v1.4.0
+- **Token 预刷新** — 后台每 5 分钟检查，提前 15 分钟自动刷新
+- **健康检查** — 每 10 分钟检测账号可用性
+- **请求重试机制** — 网络错误/5xx 自动重试，指数退避
 
 ## 工具调用支持
 
@@ -118,105 +123,98 @@
 | 图片理解 | ✅ | ✅ | ❌ |
 | 网络搜索 | ✅ | ✅ | ❌ |
 
-## 已知限制
-
-### 对话长度限制
-
-Kiro API 有输入长度限制。当对话历史过长时，会返回错误：
-
-```
-Input is too long. (CONTENT_LENGTH_EXCEEDS_THRESHOLD)
-```
-
-#### 自动处理（v1.6.0+）
-
-代理内置了历史消息管理功能，可在「设置」页面配置：
-
-- **错误重试**（默认）：遇到长度错误时自动截断并重试
-- **智能摘要**：用 AI 生成早期对话摘要，保留关键信息
-- **摘要缓存**（默认）：历史变化不大时复用最近摘要，减少重复 LLM 调用
-- **自动截断**：每次请求前优先保留最新上下文并摘要前文，必要时按数量/字符数截断
-- **预估检测**：预估 token 数量，超限预先截断
-
-摘要缓存可通过以下配置项调整（默认值）：
-- `summary_cache_enabled`: `true`
-- `summary_cache_min_delta_messages`: `3`
-- `summary_cache_min_delta_chars`: `4000`
-- `summary_cache_max_age_seconds`: `180`
-
-#### 手动处理
-
-1. 在 Claude Code 中输入 `/clear` 清空对话历史
-2. 告诉 AI 你之前在做什么，它会读取代码文件恢复上下文
-
 ## 快速开始
 
-### 方式一：下载预编译版本
+### 环境要求
 
-从 [Releases](../../releases) 下载对应平台的安装包，解压后直接运行。
+- **Python** ≥ 3.14
+- **[uv](https://docs.astral.sh/uv/)** — Python 包管理器
 
-### 方式二：从源码运行
+### 安装运行
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourname/kiro-proxy.git
-cd kiro-proxy
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+git clone https://github.com/your-username/KiroProxy.git
+cd KiroProxy
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
-# 运行
-python run.py
+# 运行（默认端口 8080）
+uv run python run.py
 
-# 或指定端口
-python run.py 8081
+# 指定端口
+uv run python run.py 9090
 ```
 
-启动后访问 http://localhost:8080
+启动后访问 http://localhost:8080 打开管理界面。
 
 ### 命令行工具 (CLI)
 
-无 GUI 服务器可使用 CLI 管理账号：
-
 ```bash
 # 账号管理
-python run.py accounts list              # 列出账号
-python run.py accounts export -o acc.json  # 导出账号
-python run.py accounts import acc.json   # 导入账号
-python run.py accounts add               # 交互式添加 Token
-python run.py accounts scan --auto       # 扫描并自动添加本地 Token
+uv run python run.py accounts list              # 列出账号
+uv run python run.py accounts export -o acc.json # 导出账号
+uv run python run.py accounts import acc.json    # 导入账号
+uv run python run.py accounts add                # 交互式添加 Token
+uv run python run.py accounts scan --auto        # 扫描并自动添加本地 Token
 
 # 登录
-python run.py login google               # Google 登录
-python run.py login github               # GitHub 登录
-python run.py login remote --host myserver.com:8080  # 生成远程登录链接
+uv run python run.py login google                # Google 登录
+uv run python run.py login github                # GitHub 登录
+uv run python run.py login remote --host myserver.com:8080  # 远程登录链接
 
 # 服务
-python run.py serve                      # 启动服务 (默认 8080)
-python run.py serve -p 8081              # 指定端口
-python run.py status                     # 查看状态
+uv run python run.py serve                       # 启动服务 (默认 8080)
+uv run python run.py serve -p 8081               # 指定端口
+uv run python run.py status                      # 查看状态
 ```
 
-### 登录获取 Token
+### 获取 Token
 
 **方式一：在线登录（推荐）**
 1. 打开 Web UI，点击「在线登录」
 2. 选择登录方式：Google / GitHub / AWS Builder ID
-3. 在浏览器中完成授权
-4. 账号自动添加
+3. 在浏览器中完成授权，账号自动添加
 
 **方式二：扫描 Token**
-1. 打开 Kiro IDE，使用 Google/GitHub 账号登录
-2. 登录成功后 token 自动保存到 `~/.aws/sso/cache/`
-3. 在 Web UI 点击「扫描 Token」添加账号
+1. 打开 Kiro IDE 并登录
+2. 在 Web UI 点击「扫描 Token」添加账号
 
-## CLI 配置
+## 配置
 
-### 模型对照表
+### 配置文件
+
+首次启动自动生成 `data/settings.toml`：
+
+```toml
+[server]
+port = 8080
+
+[proxy]
+quota_cooldown_seconds = 300
+web_search_enabled = false
+request_timeout = 300
+max_retries = 2
+max_flows = 500
+
+[sentry]
+dsn = ""
+environment = "production"
+traces_sample_rate = 0.1
+
+[logging]
+level = "INFO"
+dir = "data/logs"
+rotation = "00:00"
+retention = "30 days"
+api_log_enabled = true
+api_log_max_body_chars = 50000
+```
+
+### 客户端配置
+
+#### 模型对照表
 
 | Kiro 模型 | 能力 | Claude Code | Codex |
 |-----------|------|-------------|-------|
@@ -225,7 +223,7 @@ python run.py status                     # 查看状态
 | `claude-haiku-4.5` | ⚡ 快速 | `claude-haiku-4.5` | `gpt-4o-mini` |
 | `claude-opus-4.5` | ⭐⭐⭐⭐⭐ 最强 | `claude-opus-4.5` | `o1` |
 
-### Claude Code 配置
+#### Claude Code
 
 ```
 名称: Kiro Proxy
@@ -234,16 +232,11 @@ Base URL: http://localhost:8080
 模型: claude-sonnet-4
 ```
 
-### Codex 配置
-
-Codex CLI 使用 OpenAI Responses API，配置如下：
+#### Codex CLI
 
 ```bash
-# 设置环境变量
 export OPENAI_API_KEY=any
 export OPENAI_BASE_URL=http://localhost:8080/v1
-
-# 运行 Codex
 codex
 ```
 
@@ -271,79 +264,100 @@ base_url = "http://localhost:8080/v1"
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/accounts` | GET | 获取所有账号状态 |
+| `/api/accounts` | POST | 添加账号 |
 | `/api/accounts/{id}` | GET | 获取账号详情 |
-| `/api/accounts/{id}/usage` | GET | 获取账号用量信息 |
+| `/api/accounts/{id}` | DELETE | 删除账号 |
+| `/api/accounts/{id}/toggle` | POST | 启用/禁用账号 |
 | `/api/accounts/{id}/refresh` | POST | 刷新账号 Token |
 | `/api/accounts/{id}/restore` | POST | 恢复账号（从冷却状态） |
+| `/api/accounts/{id}/usage` | GET | 获取账号用量信息 |
 | `/api/accounts/refresh-all` | POST | 刷新所有即将过期的 Token |
+| `/api/accounts/export` | GET | 导出账号配置 |
+| `/api/accounts/import` | POST | 导入账号配置 |
+| `/api/accounts/manual` | POST | 手动添加 Token |
+| `/api/token/scan` | GET | 扫描本地 Token 文件 |
+| `/api/token/add-from-scan` | POST | 从扫描结果添加账号 |
+| `/api/token/refresh-check` | POST | 检查 Token 刷新状态 |
 | `/api/flows` | GET | 获取流量记录 |
 | `/api/flows/stats` | GET | 获取流量统计 |
 | `/api/flows/{id}` | GET | 获取流量详情 |
+| `/api/flows/{id}/bookmark` | POST | 收藏流量记录 |
+| `/api/flows/{id}/note` | POST | 添加备注 |
+| `/api/flows/{id}/tag` | POST | 添加标签 |
+| `/api/flows/export` | POST | 导出流量记录 |
 | `/api/quota` | GET | 获取配额状态 |
 | `/api/stats` | GET | 获取统计信息 |
+| `/api/stats/detailed` | GET | 获取详细统计 |
 | `/api/health-check` | POST | 手动触发健康检查 |
 | `/api/browsers` | GET | 获取可用浏览器列表 |
+| `/api/settings/history` | GET/POST | 历史消息管理设置 |
+| `/api/settings/rate-limit` | GET/POST | 请求限速设置 |
 | `/api/docs` | GET | 获取文档列表 |
 | `/api/docs/{id}` | GET | 获取文档内容 |
+| `/api/kiro/login/start` | POST | 启动 AWS 登录 |
+| `/api/kiro/login/poll` | GET | 轮询登录状态 |
+| `/api/kiro/social/*` | POST/GET | Social Auth 登录 |
+| `/api/remote-login/*` | POST/GET | 远程登录链接 |
 
 ## 项目结构
 
 ```
-kiro_proxy/
-├── main.py                    # FastAPI 应用入口
-├── config.py                  # 全局配置
-├── converters.py              # 协议转换
+KiroProxy/
+├── run.py                         # 启动入口
+├── pyproject.toml                 # 项目依赖
 │
-├── core/                      # 核心模块
-│   ├── account.py            # 账号管理
-│   ├── state.py              # 全局状态
-│   ├── persistence.py        # 配置持久化
-│   ├── scheduler.py          # 后台任务调度
-│   ├── stats.py              # 请求统计
-│   ├── retry.py              # 重试机制
-│   ├── browser.py            # 浏览器检测
-│   ├── flow_monitor.py       # 流量监控
-│   └── usage.py              # 用量查询
+├── kiro_proxy/
+│   ├── main.py                    # FastAPI 应用
+│   ├── config.py                  # 全局配置（模型映射等）
+│   ├── converters.py              # 协议转换
+│   ├── cli.py                     # 命令行工具
+│   ├── kiro_api.py                # Kiro API 客户端
+│   │
+│   ├── core/                      # 核心模块
+│   │   ├── settings.py            # TOML 配置文件管理
+│   │   ├── logger.py              # loguru 日志模块
+│   │   ├── flow_monitor.py        # 流量监控 + JSONL 持久化
+│   │   ├── account.py             # 账号管理
+│   │   ├── state.py               # 全局状态
+│   │   ├── persistence.py         # 账号持久化
+│   │   ├── scheduler.py           # 后台任务调度
+│   │   ├── retry.py               # 重试机制
+│   │   ├── history_manager.py     # 历史消息管理
+│   │   └── ...
+│   │
+│   ├── credential/                # 凭证管理
+│   │   ├── fingerprint.py         # Machine ID
+│   │   ├── quota.py               # 配额管理
+│   │   └── refresher.py           # Token 刷新
+│   │
+│   ├── auth/                      # 认证模块
+│   │   └── device_flow.py         # Device Code Flow / Social Auth
+│   │
+│   ├── handlers/                  # API 处理器
+│   │   ├── anthropic.py           # /v1/messages
+│   │   ├── openai.py              # /v1/chat/completions
+│   │   ├── responses.py           # /v1/responses (Codex CLI)
+│   │   ├── gemini.py              # Gemini 协议
+│   │   └── admin.py               # 管理 API
+│   │
+│   ├── docs/                      # 内置帮助文档
+│   └── web/                       # Web UI
 │
-├── credential/                # 凭证管理
-│   ├── types.py              # KiroCredentials
-│   ├── fingerprint.py        # Machine ID 生成
-│   ├── quota.py              # 配额管理器
-│   └── refresher.py          # Token 刷新
+├── scripts/                       # 调试工具（见 scripts/README.md）
 │
-├── auth/                      # 认证模块
-│   └── device_flow.py        # Device Code Flow / Social Auth
-│
-├── handlers/                  # API 处理器
-│   ├── anthropic.py          # /v1/messages
-│   ├── openai.py             # /v1/chat/completions
-│   ├── responses.py          # /v1/responses (Codex CLI)
-│   ├── gemini.py             # /v1/models/{model}:generateContent
-│   └── admin.py              # 管理 API
-│
-├── cli.py                     # 命令行工具
-│
-├── docs/                      # 内置文档
-│   ├── 01-quickstart.md      # 快速开始
-│   ├── 02-features.md        # 功能特性
-│   ├── 03-faq.md             # 常见问题
-│   └── 04-api.md             # API 参考
-│
-└── web/
-    └── html.py               # Web UI (组件化单文件)
+└── data/                          # 运行时数据（gitignored）
+    ├── settings.toml              # 应用配置
+    ├── accounts.json              # 账号列表
+    ├── tokens/                    # 凭证文件
+    └── logs/
+        ├── kiro-proxy.log         # 应用日志
+        └── flows/
+            └── YYYY-MM-DD.jsonl   # API 调用记录
 ```
 
-## 构建
+## 许可证
 
-```bash
-# 安装构建依赖
-pip install pyinstaller
-
-# 构建
-python build.py
-```
-
-输出文件在 `dist/` 目录。
+本项目采用 [MIT License](LICENSE) 开源。
 
 ## 免责声明
 

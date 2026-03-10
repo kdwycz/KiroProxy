@@ -209,11 +209,18 @@ Kiro API 有输入长度限制，当对话历史过长时会返回 `CONTENT_LENG
 
 ### 自动保存
 
-账号配置自动保存到 `~/.kiro-proxy/config.json`：
+账号配置自动保存到 `data/accounts.json`：
 
 - 账号列表和状态
 - 启用/禁用设置
 - Token 文件路径
+
+应用配置保存在 `data/settings.toml`，支持端口、限速、Sentry DSN、日志级别等选项。
+
+### 日志
+
+- 应用日志：`data/logs/kiro-proxy.log`（每日轮转，保留 30 天）
+- API 调用记录：`data/logs/flows/YYYY-MM-DD.jsonl`
 
 ### 重启恢复
 

@@ -37,6 +37,7 @@ Thumbs.db
 # Temp analysis files
 flows
 flows_*
+kiro_requests/
 traffic.mitm
 *.mitm
 analyze_har.py
@@ -47,9 +48,6 @@ hex_dump.txt
 parsed_*.txt
 response.txt
 参考.txt
-
-# Other projects
-other_projects/
 
 # Runtime data (config, logs, flows)
 data/
