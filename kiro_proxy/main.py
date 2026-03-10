@@ -23,9 +23,8 @@ from .credential import generate_machine_id, get_kiro_version
 
 
 def get_resource_path(relative_path: str) -> Path:
-    """获取资源文件路径，支持从打包资源读取"""
-    base_path = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(__file__).parent.parent
-    return base_path / relative_path
+    """获取资源文件路径"""
+    return Path(__file__).parent.parent / relative_path
 
 
 @asynccontextmanager
