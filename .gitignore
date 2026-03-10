@@ -5,6 +5,8 @@ __pycache__/
 venv/
 .venv/
 *.egg-info/
+.python-version
+uv.lock
 
 # Build
 build/
@@ -48,4 +50,3 @@ response.txt
 
 # Other projects
 other_projects/
-.python-version
