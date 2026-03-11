@@ -138,8 +138,7 @@ async def handle_429(current_account, headers: dict, ctx: RetryContext, handler_
         - should_continue=True: 调用方应 continue，account 是下次要用的账号
         - should_continue=False: 无法恢复，调用方应返回 429 错误
     """
-    from . import state as state_module
-    state = state_module.state
+    from .state import state
     tag = f"({handler_name})" if handler_name else ""
     
     # === 第一阶段：快速重试同账号 ===
