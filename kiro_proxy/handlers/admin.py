@@ -830,11 +830,13 @@ def _convert_kam_account(kam: dict) -> tuple:
         "profileArn": kam.get("profileArn"),
     }
     
-    # IdC 账号需要 clientId/clientSecret
-    if auth_method == "idc":
-        creds["clientId"] = kam.get("clientId")
-        creds["clientSecret"] = kam.get("clientSecret")
-        creds["clientIdHash"] = kam.get("clientIdHash")
+    # clientId/clientSecret/clientIdHash: 有就带上（刷新 token 时需要）
+    if kam.get("clientId"):
+        creds["clientId"] = kam["clientId"]
+    if kam.get("clientSecret"):
+        creds["clientSecret"] = kam["clientSecret"]
+    if kam.get("clientIdHash"):
+        creds["clientIdHash"] = kam["clientIdHash"]
     
     return name, creds
 
@@ -883,11 +885,18 @@ async def import_accounts(request: Request):
                 creds = acc_data.get("credentials", {})
                 enabled = acc_data.get("enabled", True)
             
-            if not creds.get("accessToken"):
-                errors.append(f"{name}: 缺少 accessToken")
+            has_access_token = bool(creds.get("accessToken"))
+            has_refresh_token = bool(creds.get("refreshToken"))
+            
+            if not has_access_token and not has_refresh_token:
+                errors.append(f"{name}: 缺少 accessToken 和 refreshToken")
                 continue
             
-            if not creds.get("refreshToken"):
+            if not has_access_token:
+                # 设置占位符，导入后会自动刷新
+                creds["accessToken"] = "pending-refresh"
+            
+            if not has_refresh_token:
                 errors.append(f"{name}: 缺少 refreshToken（无法自动刷新）")
             
             # 保存凭证到文件
@@ -904,6 +913,18 @@ async def import_accounts(request: Request):
             )
             state.accounts.append(account)
             account.load_credentials()
+            
+            # 没有 accessToken 时自动刷新
+            if not has_access_token:
+                try:
+                    success, result = await account.refresh_token()
+                    if success:
+                        errors.append(f"{name}: 已通过 refreshToken 自动获取 accessToken ✅")
+                    else:
+                        errors.append(f"{name}: 自动刷新失败（{result}），请手动刷新")
+                except Exception as e:
+                    errors.append(f"{name}: 自动刷新异常（{e}），请手动刷新")
+            
             imported += 1
         except Exception as e:
             errors.append(f"{acc_data.get('name') or acc_data.get('label') or '未知'}: {str(e)}")

@@ -81,11 +81,18 @@ def cmd_accounts_import(args):
             creds = acc_data.get("credentials", {})
             enabled = acc_data.get("enabled", True)
         
-        if not creds.get("accessToken"):
-            print(f"跳过 {name}: 缺少 accessToken")
+        has_access_token = bool(creds.get("accessToken"))
+        has_refresh_token = bool(creds.get("refreshToken"))
+        
+        if not has_access_token and not has_refresh_token:
+            print(f"跳过 {name}: 缺少 accessToken 和 refreshToken")
             continue
         
-        if not creds.get("refreshToken"):
+        if not has_access_token:
+            creds["accessToken"] = "pending-refresh"
+            print(f"  {name}: 无 accessToken，将通过 refreshToken 自动获取")
+        
+        if not has_refresh_token:
             print(f"警告 {name}: 缺少 refreshToken（无法自动刷新）")
         
         # 保存凭证到文件
@@ -101,6 +108,18 @@ def cmd_accounts_import(args):
         )
         state.accounts.append(account)
         account.load_credentials()
+        
+        # 没有 accessToken 时自动刷新
+        if not has_access_token:
+            try:
+                success, result = asyncio.run(account.refresh_token())
+                if success:
+                    print(f"  ✅ {name}: 已通过 refreshToken 自动获取 accessToken")
+                else:
+                    print(f"  ⚠️ {name}: 自动刷新失败（{result}），请手动刷新")
+            except Exception as e:
+                print(f"  ⚠️ {name}: 自动刷新异常（{e}），请手动刷新")
+        
         imported += 1
         auth_label = creds.get("authMethod", "social")
         print(f"已导入: {account.name} ({auth_label})")
