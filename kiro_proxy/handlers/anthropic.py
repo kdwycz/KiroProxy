@@ -132,7 +132,17 @@ async def handle_messages(request: Request):
         system = inject_thinking_system_prefix(system, thinking_param)
     
     # 调试：打印原始请求的关键信息
-    logger.info(f"Request: model={body.get('model')} -> {model}, messages={len(messages)}, stream={stream}, tools={len(tools)}")
+    max_tokens = body.get("max_tokens", "-")
+    system_info = f"{len(system)}ch" if system else "none"
+    thinking_info = "on" if thinking_param else "off"
+    est_tokens = _count_tokens_from_messages(messages, system if isinstance(system, str) else "")
+    logger.info(
+        f"Request: model={body.get('model')} -> {model}, "
+        f"messages={len(messages)}, stream={stream}, "
+        f"tools={len(tools)}, max_tokens={max_tokens}, "
+        f"system={system_info}, thinking={thinking_info}, "
+        f"est_input_tokens≈{est_tokens}"
+    )
     
     if not messages:
         raise HTTPException(400, "messages required")
