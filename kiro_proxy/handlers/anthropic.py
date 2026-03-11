@@ -153,6 +153,8 @@ async def handle_messages(request: Request):
     if not account:
         raise HTTPException(503, "All accounts are rate limited or unavailable")
     
+    logger.info(f"Account: {account.name} ({account.id})")
+    
     # 创建 Flow 记录
     flow_id = flow_monitor.create_flow(
         protocol="anthropic",
