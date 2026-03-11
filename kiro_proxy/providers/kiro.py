@@ -163,6 +163,8 @@ class KiroProvider(BaseProvider):
                     event_type = 'toolUseEvent'
                 elif 'assistantResponseEvent' in headers_str:
                     event_type = 'assistantResponseEvent'
+                elif 'exception' in headers_str:
+                    event_type = 'exception'
             except:
                 pass
             
@@ -173,6 +175,16 @@ class KiroProvider(BaseProvider):
                 try:
                     payload = json.loads(raw[payload_start:payload_end].decode('utf-8'))
                     
+                    # Exception 事件处理（如 ContentLengthExceededException）
+                    if event_type == 'exception' or '__type' in payload:
+                        exc_type = payload.get('__type', '')
+                        if 'ContentLength' in exc_type or 'Exceeded' in exc_type:
+                            result["stop_reason"] = "max_tokens"
+                        else:
+                            result["stop_reason"] = "max_tokens"  # 所有 exception 都视为截断
+                        pos += total_len
+                        continue
+                    
                     if 'assistantResponseEvent' in payload:
                         e = payload['assistantResponseEvent']
                         if 'content' in e:
@@ -180,9 +192,13 @@ class KiroProvider(BaseProvider):
                     elif 'content' in payload and event_type != 'toolUseEvent':
                         result["content"].append(payload['content'])
                     
-                    # 捕获 contextUsagePercentage（通常在响应的最后一个事件中）
+                    # contextUsagePercentage：支持顶层和嵌套两种格式
                     if 'contextUsagePercentage' in payload:
                         result["context_usage_percentage"] = payload['contextUsagePercentage']
+                    elif 'contextUsageEvent' in payload:
+                        cue = payload['contextUsageEvent']
+                        if isinstance(cue, dict) and 'contextUsagePercentage' in cue:
+                            result["context_usage_percentage"] = cue['contextUsagePercentage']
                     
                     if event_type == 'toolUseEvent' or 'toolUseId' in payload:
                         tool_id = payload.get('toolUseId', '')
@@ -207,11 +223,22 @@ class KiroProvider(BaseProvider):
         
         # 组装工具调用
         for tool_id, tool_data in tool_input_buffer.items():
-            input_str = "".join(tool_data["input_parts"])
-            try:
-                input_json = json.loads(input_str)
-            except:
-                input_json = {"raw": input_str}
+            input_parts = tool_data["input_parts"]
+            
+            # 空输入（工具无必填参数）→ 使用空对象
+            if not input_parts:
+                input_json = {}
+            else:
+                input_str = "".join(input_parts)
+                # 尝试直接解析（增量模式下拼接可用）
+                try:
+                    input_json = json.loads(input_str)
+                except (json.JSONDecodeError, ValueError):
+                    # 累积模式修复：Kiro 可能发送累积式输入
+                    # 每次发送截止当前的全部内容，而非增量
+                    # 例如: '{"path"' + '{"path": "/a.txt"' + '{"path": "/a.txt", "content": "hello"}'
+                    # 此时只取最后一个能被解析的部分
+                    input_json = self._repair_tool_input(input_parts)
             
             result["tool_uses"].append({
                 "type": "tool_use",
@@ -235,6 +262,25 @@ class KiroProvider(BaseProvider):
             result["input_tokens"] = max(0, total_tokens - output_tokens)
         
         return result
+    
+    def _repair_tool_input(self, parts: list) -> dict:
+        """修复累积式工具输入
+        
+        Kiro 有时会发送累积式输入（每次包含截止当前的全部内容），
+        而非增量式输入（每次只发送新增部分）。
+        
+        策略：从最后一个 part 开始逆序尝试 json.loads，
+        第一个能解析成功的就是完整的输入。
+        """
+        # 逆序尝试每个 part
+        for part in reversed(parts):
+            try:
+                return json.loads(part)
+            except (json.JSONDecodeError, ValueError):
+                continue
+        
+        # 都解析不了，返回原始拼接字符串
+        return {"raw": "".join(parts)}
     
     def parse_response_text(self, raw: bytes) -> str:
         """解析响应，只返回文本内容"""

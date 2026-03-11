@@ -1,9 +1,6 @@
 """协议转换模块 - Anthropic/OpenAI/Gemini <-> Kiro
-
-增强版：参考 proxycast 实现
-- 工具数量限制（最多 50 个）
 - 工具描述截断（最多 500 字符）
-- 历史消息交替修复
+- 历史消息交替修复（合并连续 assistant、按 ID 清理孤立 toolUse）
 - OpenAI tool 角色消息处理
 - tool_choice: required 支持
 - web_search 特殊工具支持
@@ -17,7 +14,6 @@ from typing import List, Dict, Any, Tuple, Optional
 from .config import WEB_SEARCH_ENABLED
 
 # 常量
-MAX_TOOLS = 50
 MAX_TOOL_DESCRIPTION_LENGTH = 500
 
 # Thinking 模式常量
@@ -140,9 +136,6 @@ def convert_anthropic_tools_to_kiro(tools: List[dict]) -> List[dict]:
             # 未启用时直接跳过（过滤掉）
             continue
         
-        # 限制工具数量
-        if function_count >= MAX_TOOLS:
-            continue
         function_count += 1
         
         description = tool.get("description", f"Tool: {name}")
@@ -169,12 +162,16 @@ def fix_history_alternation(history: List[dict], model_id: str = "claude-sonnet-
     Kiro API 规则：
     1. 消息必须严格交替：user -> assistant -> user -> assistant
     2. 当 assistant 有 toolUses 时，下一条 user 必须有对应的 toolResults
-    3. 当 assistant 没有 toolUses 时，下一条 user 不能有 toolResults
+    3. toolUseId 必须一一对应，孤立的 toolUse 会导致 400 错误
+    
+    修复策略（来自 RealSeek fork 的改进）：
+    - 连续 assistant 消息：合并为一条（而非插入 "Continue" 占位消息）
+    - 连续 user 消息：合并 toolResults 或插入占位 assistant
+    - 孤立 toolUse：按 ID 精确配对，删除无对应 toolResult 的 toolUse
     """
     if not history:
         return history
     
-    # 深拷贝以避免修改原始数据
     import copy
     history = copy.deepcopy(history)
     
@@ -185,9 +182,8 @@ def fix_history_alternation(history: List[dict], model_id: str = "claude-sonnet-
         is_assistant = "assistantResponseMessage" in item
         
         if is_user:
-            # 检查上一条是否也是 user
+            # 检查上一条是否也是 user → 合并或插入占位 assistant
             if fixed and "userInputMessage" in fixed[-1]:
-                # 检查当前消息是否有 tool_results
                 user_msg = item["userInputMessage"]
                 ctx = user_msg.get("userInputMessageContext", {})
                 has_tool_results = bool(ctx.get("toolResults"))
@@ -196,10 +192,8 @@ def fix_history_alternation(history: List[dict], model_id: str = "claude-sonnet-
                     # 合并 tool_results 到上一条 user 消息
                     new_results = ctx["toolResults"]
                     last_user = fixed[-1]["userInputMessage"]
-                    
                     if "userInputMessageContext" not in last_user:
                         last_user["userInputMessageContext"] = {}
-                    
                     last_ctx = last_user["userInputMessageContext"]
                     if "toolResults" in last_ctx and last_ctx["toolResults"]:
                         last_ctx["toolResults"].extend(new_results)
@@ -207,46 +201,37 @@ def fix_history_alternation(history: List[dict], model_id: str = "claude-sonnet-
                         last_ctx["toolResults"] = new_results
                     continue
                 else:
-                    # 插入一个占位 assistant 消息（不带 toolUses）
+                    # 插入占位 assistant 消息（不带 toolUses）
                     fixed.append({
                         "assistantResponseMessage": {
                             "content": "I understand."
                         }
                     })
             
-            # 验证 toolResults 与前一个 assistant 的 toolUses 配对
-            if fixed and "assistantResponseMessage" in fixed[-1]:
-                last_assistant = fixed[-1]["assistantResponseMessage"]
-                has_tool_uses = bool(last_assistant.get("toolUses"))
-                
-                user_msg = item["userInputMessage"]
-                ctx = user_msg.get("userInputMessageContext", {})
-                has_tool_results = bool(ctx.get("toolResults"))
-                
-                if has_tool_uses and not has_tool_results:
-                    # assistant 有 toolUses 但 user 没有 toolResults
-                    # 这是不允许的，需要清除 assistant 的 toolUses
-                    last_assistant.pop("toolUses", None)
-                elif not has_tool_uses and has_tool_results:
-                    # assistant 没有 toolUses 但 user 有 toolResults
-                    # 这是不允许的，需要清除 user 的 toolResults
-                    item["userInputMessage"].pop("userInputMessageContext", None)
-            
             fixed.append(item)
         
         elif is_assistant:
-            # 检查上一条是否也是 assistant
+            # 连续 assistant 消息：合并到上一条（而非插入 "Continue" 占位）
             if fixed and "assistantResponseMessage" in fixed[-1]:
-                # 插入一个占位 user 消息（不带 toolResults）
-                fixed.append({
-                    "userInputMessage": {
-                        "content": "Continue",
-                        "modelId": model_id,
-                        "origin": "AI_EDITOR"
-                    }
-                })
+                last_assistant = fixed[-1]["assistantResponseMessage"]
+                curr_assistant = item["assistantResponseMessage"]
+                
+                # 合并 content
+                last_content = last_assistant.get("content", "")
+                curr_content = curr_assistant.get("content", "")
+                if curr_content:
+                    last_assistant["content"] = (last_content + "\n" + curr_content).strip()
+                
+                # 合并 toolUses
+                curr_uses = curr_assistant.get("toolUses", [])
+                if curr_uses:
+                    if "toolUses" not in last_assistant:
+                        last_assistant["toolUses"] = []
+                    last_assistant["toolUses"].extend(curr_uses)
+                
+                continue  # 不再 append，已合并
             
-            # 如果历史为空，先插入一个 user 消息
+            # 如果历史为空（以 assistant 开头），先插入占位 user
             if not fixed:
                 fixed.append({
                     "userInputMessage": {
@@ -258,15 +243,60 @@ def fix_history_alternation(history: List[dict], model_id: str = "claude-sonnet-
             
             fixed.append(item)
     
-    # 确保以 assistant 结尾（如果最后是 user，添加占位 assistant）
+    # 确保以 assistant 结尾
     if fixed and "userInputMessage" in fixed[-1]:
-        # 不需要清除 toolResults，因为它是与前一个 assistant 的 toolUses 配对的
-        # 占位 assistant 只是为了满足交替规则
         fixed.append({
             "assistantResponseMessage": {
                 "content": "I understand."
             }
         })
+    
+    # === 第二遍：按 ID 精确配对 toolUses/toolResults ===
+    for i in range(len(fixed)):
+        if "assistantResponseMessage" not in fixed[i]:
+            continue
+        
+        assistant = fixed[i]["assistantResponseMessage"]
+        tool_uses = assistant.get("toolUses", [])
+        if not tool_uses:
+            continue
+        
+        # 找到紧接着的 user 消息
+        if i + 1 >= len(fixed) or "userInputMessage" not in fixed[i + 1]:
+            # 最后一个 assistant 消息：保留 toolUses
+            # 因为对应的 toolResults 通过 currentMessage 发送，不在 history 中
+            if i == len(fixed) - 1:
+                continue
+            # 非最后一个，且没有 user 消息跟着 → 清除所有 toolUses
+            assistant.pop("toolUses", None)
+            continue
+        
+        next_user = fixed[i + 1]["userInputMessage"]
+        ctx = next_user.get("userInputMessageContext", {})
+        results = ctx.get("toolResults", [])
+        result_ids = {tr["toolUseId"] for tr in results if "toolUseId" in tr}
+        
+        if not result_ids:
+            # user 完全没有 toolResults → 清除 assistant 的所有 toolUses
+            assistant.pop("toolUses", None)
+        else:
+            # 按 ID 精确过滤：只保留有对应 toolResult 的 toolUse
+            assistant["toolUses"] = [
+                tu for tu in tool_uses
+                if tu.get("toolUseId") in result_ids
+            ]
+            if not assistant["toolUses"]:
+                assistant.pop("toolUses", None)
+            
+            # 反向检查：清除没有对应 toolUse 的 toolResult
+            use_ids = {tu.get("toolUseId") for tu in assistant.get("toolUses", [])}
+            if use_ids:
+                ctx["toolResults"] = [
+                    tr for tr in results
+                    if tr.get("toolUseId") in use_ids
+                ]
+            else:
+                next_user.pop("userInputMessageContext", None)
     
     return fixed
 
