@@ -86,10 +86,7 @@ async def get_account_detail(account_id: str):
                     "is_expired": acc.is_token_expired(),
                     "is_expiring_soon": acc.is_token_expiring_soon(),
                 } if creds else None,
-                "cooldown": {
-                    "is_cooldown": not quota_manager.is_available(acc.id),
-                    "remaining_seconds": quota_manager.get_cooldown_remaining(acc.id),
-                }
+                "rate_limit": quota_manager.get_rate_limit_info(acc.id),
             }
     raise HTTPException(404, "Account not found")
 
@@ -353,7 +350,12 @@ async def get_quota_status():
                 "exceeded_at": r.exceeded_at,
                 "cooldown_until": r.cooldown_until,
                 "remaining_seconds": max(0, int(r.cooldown_until - time.time())),
-                "reason": r.reason
+                "reason": r.reason,
+                "rate_limit_info": {
+                    "backoff_level": r.backoff_level,
+                    "total_429_count": r.total_429_count,
+                    "last_429_at": r.last_429_at,
+                }
             }
             for r in quota_manager.exceeded_records.values()
         ]

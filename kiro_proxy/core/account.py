@@ -130,23 +130,19 @@ class Account:
             return False, result
     
     def mark_quota_exceeded(self, reason: str = "Rate limited"):
-        """标记配额超限（只在限速启用时生效）"""
-        from .rate_limiter import get_rate_limiter
-        rate_limiter = get_rate_limiter()
-        
-        if rate_limiter.should_apply_quota_cooldown():
-            # 使用限速器配置的冷却时间
-            cooldown = rate_limiter.get_quota_cooldown_seconds()
-            quota_manager.mark_exceeded(self.id, reason, cooldown_seconds=cooldown)
-            self.status = CredentialStatus.COOLDOWN
-            self.error_count += 1
-        # 如果限速未启用，不标记冷却，只记录错误
-        else:
-            self.error_count += 1
+        """标记配额超限（始终生效，使用指数退避冷却时间）"""
+        quota_manager.mark_exceeded(self.id, reason)
+        self.status = CredentialStatus.COOLDOWN
+        self.error_count += 1
+    
+    def reset_quota_backoff(self):
+        """重置配额退避级别（成功请求时调用）"""
+        quota_manager.reset_backoff(self.id)
+        if self.status == CredentialStatus.COOLDOWN:
+            self.status = CredentialStatus.ACTIVE
     
     def get_status_info(self) -> dict:
         """获取状态信息"""
-        cooldown_remaining = quota_manager.get_cooldown_remaining(self.id)
         creds = self.get_credentials()
         
         return {
@@ -157,7 +153,7 @@ class Account:
             "available": self.is_available(),
             "request_count": self.request_count,
             "error_count": self.error_count,
-            "cooldown_remaining": cooldown_remaining,
+            "rate_limit": quota_manager.get_rate_limit_info(self.id),
             "token_expired": self.is_token_expired() if creds else None,
             "token_expiring_soon": self.is_token_expiring_soon() if creds else None,
             "auth_method": creds.auth_method if creds else None,

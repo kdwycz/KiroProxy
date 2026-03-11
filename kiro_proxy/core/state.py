@@ -2,7 +2,7 @@
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Set
 from pathlib import Path
 
 from .logger import logger
@@ -106,12 +106,27 @@ class ProxyState:
         
         return account
     
-    def get_next_available_account(self, exclude_id: str) -> Optional[Account]:
-        """获取下一个可用账号（排除指定账号）"""
-        available = [a for a in self.accounts if a.is_available() and a.id != exclude_id]
+    def get_next_available_account(self, exclude_ids: Set[str] = None) -> Optional[Account]:
+        """获取下一个可用账号（排除指定账号集合）"""
+        if exclude_ids is None:
+            exclude_ids = set()
+        available = [a for a in self.accounts if a.is_available() and a.id not in exclude_ids]
         if not available:
             return None
         return min(available, key=lambda a: a.request_count)
+    
+    def get_shortest_cooldown(self) -> tuple:
+        """获取所有冷却中账号的最短剩余冷却时间
+        
+        Returns:
+            (remaining_seconds, account) 或 (None, None)
+        """
+        remaining, cred_id = quota_manager.get_shortest_cooldown()
+        if remaining is not None and cred_id is not None:
+            for acc in self.accounts:
+                if acc.id == cred_id:
+                    return (remaining, acc)
+        return (None, None)
     
     def mark_rate_limited(self, account_id: str, duration_seconds: int = 60):
         """标记账号限流"""

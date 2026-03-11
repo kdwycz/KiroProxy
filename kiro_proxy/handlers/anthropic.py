@@ -9,7 +9,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, RetryableRequest, is_retryable_error, stats_manager, flow_monitor, TokenUsage
+from ..core import state, RetryableRequest, is_retryable_error, stats_manager, flow_monitor, TokenUsage, RetryContext, handle_429
 from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error, TruncateStrategy
 from ..core.error_handler import classify_error, ErrorType, format_error_log
@@ -273,13 +273,14 @@ def _extract_stream_content(buffer: bytes, parse_pos: int) -> tuple:
 
 
 async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
-    """Handle streaming responses with auto-retry on quota exceeded and network errors."""
+    """Handle streaming responses with two-phase 429 retry strategy."""
     
     async def generate():
         nonlocal kiro_request, history
         current_account = account
         retry_count = 0
-        max_retries = 2
+        max_retries = max(len(state.accounts), 3)
+        retry_ctx = RetryContext()
         full_content = ""
         
         while retry_count <= max_retries:
@@ -289,15 +290,10 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         
                     # 处理配额超限
                     if response.status_code == 429 or is_quota_exceeded_error(response.status_code, ""):
-                        current_account.mark_quota_exceeded("Rate limited (stream)")
-                            
-                        # 尝试切换账号
-                        next_account = state.get_next_available_account(current_account.id)
-                        if next_account and retry_count < max_retries:
-                            logger.info(f"配额超限，切换账号: {current_account.id} -> {next_account.id}")
-                            current_account = next_account
-                            token = current_account.get_token()
-                            headers["Authorization"] = f"Bearer {token}"
+                        current_account, should_continue = await handle_429(
+                            current_account, headers, retry_ctx, "stream"
+                        )
+                        if should_continue:
                             retry_count += 1
                             continue
 
@@ -377,7 +373,8 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         
                         # 账号封禁 - 尝试切换账号
                         if error_obj.should_switch_account:
-                            next_account = state.get_next_available_account(current_account.id)
+                            retry_ctx.tried_accounts.add(current_account.id)
+                            next_account = state.get_next_available_account(exclude_ids=retry_ctx.tried_accounts)
                             if next_account and retry_count < max_retries:
                                 logger.info(f"切换账号: {current_account.id} -> {next_account.id}")
                                 current_account = next_account
@@ -471,6 +468,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
                     current_account.request_count += 1
                     current_account.last_used = time.time()
+                    current_account.reset_quota_backoff()  # 成功后重置退避
                     get_rate_limiter().record_request(current_account.id)
                     duration = (time.time() - start_time) * 1000
                     state.add_log(RequestLog(
@@ -508,7 +506,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 if is_retryable_error(None, e) and retry_count < max_retries:
                     logger.error(f"网络错误，重试 {retry_count + 1}/{max_retries}: {type(e).__name__}")
                     retry_count += 1
-                    import asyncio
                     await asyncio.sleep(0.5 * (2 ** retry_count))
                     continue
                 if flow_id:
@@ -527,12 +524,17 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
 
 async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
-    """Handle non-streaming responses with auto-retry on quota exceeded and network errors."""
+    """Handle non-streaming responses with two-phase 429 retry strategy.
+    
+    Phase 1: Sleep 2s and retry same account (covers most transient rate limits)
+    Phase 2: Mark cooldown (exponential backoff), switch accounts or wait shortest cooldown
+    """
     error_msg = None
     status_code = 200
     current_account = account
-    max_retries = 2
-    retry_ctx = RetryableRequest(max_retries=2)
+    rate_ctx = RetryContext()
+    max_retries = max(len(state.accounts), 3)
+    retry_ctx = RetryableRequest(max_retries=max_retries)
     should_log = False
 
     for retry in range(max_retries + 1):
@@ -542,20 +544,13 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                 response = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
                 status_code = response.status_code
 
-                # 处理配额超限
+                # 处理配额超限 (429)
                 if response.status_code == 429 or is_quota_exceeded_error(response.status_code, response.text):
-                    current_account.mark_quota_exceeded("Rate limited")
-                    
-                    # 尝试切换账号
-                    next_account = state.get_next_available_account(current_account.id)
-                    if next_account and retry < max_retries:
-                        logger.info(f"配额超限，切换账号: {current_account.id} -> {next_account.id}")
-                        current_account = next_account
-                        token = current_account.get_token()
-                        creds = current_account.get_credentials()
-                        headers["Authorization"] = f"Bearer {token}"
+                    current_account, should_continue = await handle_429(
+                        current_account, headers, rate_ctx, "anthropic"
+                    )
+                    if should_continue:
                         continue
-                    
                     if flow_id:
                         flow_monitor.fail_flow(flow_id, "rate_limit_error", "All accounts rate limited", 429)
                     raise HTTPException(429, "All accounts rate limited")
@@ -581,7 +576,8 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     
                     # 账号封禁或配额超限 - 尝试切换账号
                     if error_obj.should_switch_account:
-                        next_account = state.get_next_available_account(current_account.id)
+                        rate_ctx.tried_accounts.add(current_account.id)
+                        next_account = state.get_next_available_account(exclude_ids=rate_ctx.tried_accounts)
                         if next_account and retry < max_retries:
                             logger.info(f"切换账号: {current_account.id} -> {next_account.id}")
                             current_account = next_account
@@ -614,6 +610,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                 result = parse_event_stream_full(response.content)
                 current_account.request_count += 1
                 current_account.last_used = time.time()
+                current_account.reset_quota_backoff()  # 成功后重置退避
                 get_rate_limiter().record_request(current_account.id)
 
                 # 完成 Flow
@@ -687,3 +684,4 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                 )
     
     raise HTTPException(503, "All retries exhausted")
+

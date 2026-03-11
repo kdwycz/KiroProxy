@@ -1,5 +1,6 @@
 """请求重试机制"""
 import asyncio
+from dataclasses import dataclass, field
 from typing import Callable, Any, Optional, Set
 from functools import wraps
 
@@ -117,3 +118,56 @@ class RetryableRequest:
         delay = min(self.base_delay * (2 ** (self.attempt - 1)), 5.0)
         logger.info(f"第 {self.attempt} 次重试，延迟 {delay:.1f}s")
         await asyncio.sleep(delay)
+
+
+@dataclass
+class RetryContext:
+    """429 重试上下文，在整个请求生命周期中共享"""
+    tried_accounts: Set[str] = field(default_factory=set)
+    quick_retry_done: bool = False
+
+
+async def handle_429(current_account, headers: dict, ctx: RetryContext, handler_name: str = ""):
+    """两阶段 429 重试处理
+    
+    Phase 1: sleep 2s，同账号重试（覆盖大部分瞬时限速）
+    Phase 2: 标记冷却（指数退避），换号或等最短冷却
+    
+    Returns:
+        (account, should_continue)
+        - should_continue=True: 调用方应 continue，account 是下次要用的账号
+        - should_continue=False: 无法恢复，调用方应返回 429 错误
+    """
+    from . import state as state_module
+    state = state_module.state
+    tag = f"({handler_name})" if handler_name else ""
+    
+    # === 第一阶段：快速重试同账号 ===
+    if not ctx.quick_retry_done:
+        ctx.quick_retry_done = True
+        logger.info(f"429 快速重试{tag}: 账号 {current_account.id}，sleep 2s 后同账号重试")
+        await asyncio.sleep(2)
+        return current_account, True
+    
+    # === 第二阶段：冷却 + 换号 ===
+    current_account.mark_quota_exceeded(f"Rate limited {tag}".strip())
+    ctx.tried_accounts.add(current_account.id)
+    
+    # 尝试切换到未试过的可用账号
+    next_account = state.get_next_available_account(exclude_ids=ctx.tried_accounts)
+    if next_account:
+        logger.info(f"配额超限，切换账号: {current_account.id} -> {next_account.id}")
+        headers["Authorization"] = f"Bearer {next_account.get_token()}"
+        ctx.quick_retry_done = False  # 新账号重置快速重试
+        return next_account, True
+
+    # 无可用账号 - 检查最短冷却时间
+    remaining, cooldown_account = state.get_shortest_cooldown()
+    if remaining is not None and remaining <= 5:
+        logger.info(f"所有账号限速中，等待 {remaining:.1f}s 后重试 {cooldown_account.id}")
+        await asyncio.sleep(remaining + 0.5)
+        headers["Authorization"] = f"Bearer {cooldown_account.get_token()}"
+        return cooldown_account, True
+
+    # 无法恢复
+    return current_account, False

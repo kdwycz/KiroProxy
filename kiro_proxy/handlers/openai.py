@@ -10,7 +10,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager
+from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
 from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
@@ -119,7 +119,8 @@ async def handle_chat_completions(request: Request):
     status_code = 200
     content = ""
     current_account = account
-    max_retries = 2
+    max_retries = max(len(state.accounts), 3)
+    rate_ctx = RetryContext()
 
     try:
       for retry in range(max_retries + 1):
@@ -130,23 +131,11 @@ async def handle_chat_completions(request: Request):
                 
                 # 处理配额超限
                 if resp.status_code == 429 or is_quota_exceeded_error(resp.status_code, resp.text):
-                    current_account.mark_quota_exceeded("Rate limited")
-                    
-                    # 尝试切换账号
-                    next_account = state.get_next_available_account(current_account.id)
-                    if next_account and retry < max_retries:
-                        logger.info(f"配额超限，切换账号: {current_account.id} -> {next_account.id}")
-                        current_account = next_account
-                        token = current_account.get_token()
-                        creds = current_account.get_credentials()
-                        headers = build_headers(
-                            token,
-                            machine_id=current_account.get_machine_id(),
-                            profile_arn=creds.profile_arn if creds else None,
-                            client_id=creds.client_id if creds else None
-                        )
+                    current_account, should_continue = await handle_429(
+                        current_account, headers, rate_ctx, "openai"
+                    )
+                    if should_continue:
                         continue
-                    
                     raise HTTPException(429, "All accounts rate limited")
                 
                 # 处理可重试的服务端错误
@@ -178,7 +167,8 @@ async def handle_chat_completions(request: Request):
                     
                     # 尝试切换账号
                     if error.should_switch_account:
-                        next_account = state.get_next_available_account(current_account.id)
+                        rate_ctx.tried_accounts.add(current_account.id)
+                        next_account = state.get_next_available_account(exclude_ids=rate_ctx.tried_accounts)
                         if next_account and retry < max_retries:
                             logger.info(f"切换账号: {current_account.id} -> {next_account.id}")
                             current_account = next_account
@@ -212,6 +202,7 @@ async def handle_chat_completions(request: Request):
                 content = parse_event_stream(resp.content)
                 current_account.request_count += 1
                 current_account.last_used = time.time()
+                current_account.reset_quota_backoff()  # 成功后重置退避
                 get_rate_limiter().record_request(current_account.id)
                 break
                 

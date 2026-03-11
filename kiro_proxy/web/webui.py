@@ -741,13 +741,18 @@ async function loadQuota(){
     const r=await fetch('/api/quota');
     const d=await r.json();
     if(d.exceeded_credentials&&d.exceeded_credentials.length>0){
-      $('#quotaStatus').innerHTML=d.exceeded_credentials.map(c=>`
+      $('#quotaStatus').innerHTML=d.exceeded_credentials.map(c=>{
+        const rl=c.rate_limit_info||{};
+        const levelText=rl.backoff_level!==undefined?` [L${rl.backoff_level}]`:'';
+        const countText=rl.total_429_count?` (${rl.total_429_count}x 429)`:'';
+        return `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem;background:var(--bg);border-radius:4px;margin-bottom:0.5rem">
-          <span><span class="badge warn">${_('accounts.cooldown')}</span> ${c.credential_id}</span>
+          <span><span class="badge warn">${_('accounts.cooldown')}</span> ${c.credential_id}${levelText}${countText}</span>
           <span style="color:var(--muted);font-size:0.8rem">${_('monitor.remaining')} ${c.remaining_seconds}${_('time.seconds')}</span>
           <button class="secondary small" onclick="restoreAccount('${c.credential_id}')">${_('common.restore')}</button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }else{
       $('#quotaStatus').innerHTML='<p style="color:var(--muted)">'+_('monitor.noCooldown')+'</p>';
     }
@@ -829,7 +834,8 @@ async function loadAccounts(){
             <div class="account-meta-item"><span>${_('accounts.requests')}</span><span>${a.request_count}</span></div>
             <div class="account-meta-item"><span>${_('accounts.errors')}</span><span>${a.error_count}</span></div>
             <div class="account-meta-item"><span>${_('accounts.token')}</span><span class="badge ${tokenBadge}">${tokenStatus}</span></div>
-            ${a.cooldown_remaining?`<div class="account-meta-item"><span>${_('accounts.cooldown')}</span><span>${a.cooldown_remaining}s</span></div>`:''}
+            ${a.rate_limit&&a.rate_limit.total_429_count?`<div class="account-meta-item"><span>429 次数</span><span>${a.rate_limit.total_429_count}</span></div>`:''}
+            ${a.rate_limit&&a.rate_limit.is_cooldown?`<div class="account-meta-item"><span>冷却中</span><span class="badge warn">L${a.rate_limit.backoff_level} (${a.rate_limit.cooldown_remaining}s)</span></div>`:''}
           </div>
           <div id="usage-${a.id}" class="account-usage" style="display:none;margin-top:0.75rem;padding:0.75rem;background:var(--bg);border-radius:6px"></div>
           <div class="account-actions">
@@ -910,7 +916,9 @@ async function viewAccountDetail(id){
   try{
     const r=await fetch('/api/accounts/'+id);
     const d=await r.json();
-    alert(`账号: ${d.name}\\nID: ${d.id}\\n状态: ${d.status}\\n请求数: ${d.request_count}\\n错误数: ${d.error_count}`);
+    const rl=d.rate_limit||{};
+    const rlInfo=rl.total_429_count?`\\n429 次数: ${rl.total_429_count}\\n退避级别: L${rl.backoff_level}\\n冷却中: ${rl.is_cooldown?'是 ('+rl.cooldown_remaining+'s)':'否'}`:'';
+    alert(`账号: ${d.name}\\nID: ${d.id}\\n状态: ${d.status}\\n请求数: ${d.request_count}\\n错误数: ${d.error_count}${rlInfo}`);
   }catch(e){alert('获取详情失败: '+e.message)}
 }
 
