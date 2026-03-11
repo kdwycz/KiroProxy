@@ -20,8 +20,15 @@ WEB_SEARCH_ENABLED = False
 # Kiro 支持: auto, claude-sonnet-4, claude-sonnet-4.5, claude-haiku-4.5, claude-opus-4.5
 MODEL_MAPPING = {
     # === Claude 4.6（Kiro 暂不支持，降级到 4.5） ===
+    "claude-opus-4-6": "claude-opus-4.5",
     "claude-opus-4.6": "claude-opus-4.5",
+    "claude-sonnet-4-6": "claude-sonnet-4.5",
     "claude-sonnet-4.6": "claude-sonnet-4.5",
+
+    # === Claude 4.5
+    "claude-opus-4-5": "claude-opus-4.5",
+    "claude-sonnet-4-5": "claude-sonnet-4.5",
+    "claude-haiku-4-5": "claude-haiku-4.5",
     "claude-haiku-4-5-20251001": "claude-haiku-4.5",
 
     # === Claude 4.x 旧版名称 ===
