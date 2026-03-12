@@ -66,7 +66,7 @@ CSS_ACCOUNTS = '''
 .account-card { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; background: var(--card); }
 .account-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
 .account-name { font-weight: 500; display: flex; align-items: center; gap: 0.5rem; }
-.account-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+.account-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
 .account-meta-item { display: flex; justify-content: space-between; padding: 0.25rem 0; }
 .account-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
 '''
