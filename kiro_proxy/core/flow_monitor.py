@@ -1,7 +1,8 @@
 """Flow Monitor - LLM 流量监控
 
-记录完整的请求/响应数据，支持查询、过滤、导出。
+记录完整的请求/响应数据，支持查询、过滤。
 支持 JSONL 文件持久化。
+完成/失败时自动同步 StatsManager 统计。
 """
 import json
 import time
@@ -132,17 +133,11 @@ class LLMFlow:
     # 时间
     timing: FlowTiming = field(default_factory=FlowTiming)
     
-    # 元数据
-    tags: List[str] = field(default_factory=list)
-    notes: str = ""
-    bookmarked: bool = False
-    
     # 重试信息
     retry_count: int = 0
-    parent_flow_id: Optional[str] = None
     
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """转换为字典（列表展示用）"""
         d = {
             "id": self.id,
             "state": self.state.value,
@@ -156,9 +151,6 @@ class LLMFlow:
                 "ttfb_ms": self.timing.ttfb_ms,
                 "duration_ms": self.timing.duration_ms,
             },
-            "tags": self.tags,
-            "notes": self.notes,
-            "bookmarked": self.bookmarked,
             "retry_count": self.retry_count,
         }
         
@@ -212,10 +204,9 @@ class LLMFlow:
 class FlowStore:
     """Flow 存储"""
     
-    def __init__(self, max_flows: int = 500, persist_dir: Optional[Path] = None):
+    def __init__(self, max_flows: int = 500):
         self.flows: deque[LLMFlow] = deque(maxlen=max_flows)
         self.flow_map: Dict[str, LLMFlow] = {}
-        self.persist_dir = persist_dir
         self.max_flows = max_flows
         
         # 统计
@@ -254,11 +245,6 @@ class FlowStore:
         account_id: Optional[str] = None,
         state: Optional[FlowState] = None,
         has_error: Optional[bool] = None,
-        bookmarked: Optional[bool] = None,
-        min_duration_ms: Optional[float] = None,
-        max_duration_ms: Optional[float] = None,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
         search: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
@@ -281,16 +267,6 @@ class FlowStore:
                     continue
                 if not has_error and flow.error:
                     continue
-            if bookmarked is not None and flow.bookmarked != bookmarked:
-                continue
-            if min_duration_ms and flow.timing.duration_ms and flow.timing.duration_ms < min_duration_ms:
-                continue
-            if max_duration_ms and flow.timing.duration_ms and flow.timing.duration_ms > max_duration_ms:
-                continue
-            if start_time and flow.timing.created_at < start_time:
-                continue
-            if end_time and flow.timing.created_at > end_time:
-                continue
             if search:
                 # 简单搜索：在内容中查找
                 found = False
@@ -339,75 +315,14 @@ class FlowStore:
             "total_tokens_out": self.total_tokens_out,
             "by_model": model_stats,
         }
-    
-    def export_jsonl(self, flows: List[LLMFlow]) -> str:
-        """导出为 JSONL 格式"""
-        lines = []
-        for f in flows:
-            lines.append(json.dumps(f.to_full_dict(), ensure_ascii=False))
-        return "\n".join(lines)
-    
-    def export_markdown(self, flow: LLMFlow) -> str:
-        """导出单个 Flow 为 Markdown"""
-        lines = [
-            f"# Flow {flow.id}",
-            "",
-            f"- **Protocol**: {flow.protocol}",
-            f"- **State**: {flow.state.value}",
-            f"- **Account**: {flow.account_name or flow.account_id or 'N/A'}",
-            f"- **Created**: {datetime.fromtimestamp(flow.timing.created_at).isoformat()}",
-        ]
-        
-        if flow.timing.duration_ms:
-            lines.append(f"- **Duration**: {flow.timing.duration_ms:.0f}ms")
-        
-        if flow.request:
-            lines.extend([
-                "",
-                "## Request",
-                "",
-                f"- **Model**: {flow.request.model}",
-                f"- **Stream**: {flow.request.stream}",
-                f"- **Messages**: {len(flow.request.messages)}",
-            ])
-            
-            if flow.request.system:
-                lines.extend(["", "### System", "", f"```\n{flow.request.system}\n```"])
-            
-            lines.extend(["", "### Messages", ""])
-            for msg in flow.request.messages:
-                content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content, ensure_ascii=False)
-                lines.append(f"**{msg.role}**: {content[:500]}{'...' if len(content) > 500 else ''}")
-                lines.append("")
-        
-        if flow.response:
-            lines.extend([
-                "## Response",
-                "",
-                f"- **Status**: {flow.response.status_code}",
-                f"- **Stop Reason**: {flow.response.stop_reason}",
-            ])
-            
-            if flow.response.usage:
-                lines.append(f"- **Tokens**: {flow.response.usage.input_tokens} in / {flow.response.usage.output_tokens} out")
-            
-            if flow.response.content:
-                lines.extend(["", "### Content", "", f"```\n{flow.response.content[:2000]}\n```"])
-        
-        if flow.error:
-            lines.extend([
-                "",
-                "## Error",
-                "",
-                f"- **Type**: {flow.error.type}",
-                f"- **Message**: {flow.error.message}",
-            ])
-        
-        return "\n".join(lines)
 
 
 class FlowMonitor:
-    """Flow 监控器"""
+    """Flow 监控器 — 唯一的请求记录入口
+    
+    Handler 只需调用 create_flow / complete_flow / fail_flow。
+    完成/失败时自动同步到 StatsManager。
+    """
     
     def __init__(self, max_flows: int = 500):
         self.store = FlowStore(max_flows=max_flows)
@@ -489,7 +404,7 @@ class FlowMonitor:
         usage: Optional[TokenUsage] = None,
         headers: Dict[str, str] = None,
     ):
-        """完成 Flow"""
+        """完成 Flow，并自动同步到 StatsManager"""
         flow = self.store.get(flow_id)
         if not flow:
             return
@@ -506,16 +421,23 @@ class FlowMonitor:
         flow.response.stop_reason = stop_reason
         flow.response.headers = headers or {}
         
+        tokens_in = 0
+        tokens_out = 0
         if usage:
             flow.response.usage = usage
-            self.store.total_tokens_in += usage.input_tokens
-            self.store.total_tokens_out += usage.output_tokens
+            tokens_in = usage.input_tokens
+            tokens_out = usage.output_tokens
+            self.store.total_tokens_in += tokens_in
+            self.store.total_tokens_out += tokens_out
+
+        # ── 自动同步到 StatsManager ──
+        self._sync_stats(flow, success=True, tokens_in=tokens_in, tokens_out=tokens_out)
 
         # 持久化到 JSONL
         self._write_flow_jsonl(flow)
     
     def fail_flow(self, flow_id: str, error_type: str, message: str, status_code: int = 0, raw: str = ""):
-        """标记 Flow 失败"""
+        """标记 Flow 失败，并自动同步到 StatsManager"""
         flow = self.store.get(flow_id)
         if not flow:
             return
@@ -529,27 +451,29 @@ class FlowMonitor:
             raw=raw[:1000],  # 限制长度
         )
 
+        # ── 自动同步到 StatsManager ──
+        self._sync_stats(flow, success=False)
+
         # 持久化到 JSONL
         self._write_flow_jsonl(flow)
     
-    def bookmark_flow(self, flow_id: str, bookmarked: bool = True):
-        """书签 Flow"""
-        flow = self.store.get(flow_id)
-        if flow:
-            flow.bookmarked = bookmarked
-    
-    def add_note(self, flow_id: str, note: str):
-        """添加备注"""
-        flow = self.store.get(flow_id)
-        if flow:
-            flow.notes = note
-    
-    def add_tag(self, flow_id: str, tag: str):
-        """添加标签"""
-        flow = self.store.get(flow_id)
-        if flow and tag not in flow.tags:
-            flow.tags.append(tag)
-    
+    def _sync_stats(self, flow: LLMFlow, success: bool, tokens_in: int = 0, tokens_out: int = 0):
+        """内部：同步到 StatsManager"""
+        from .stats import stats_manager
+        
+        account_id = flow.account_id or "unknown"
+        model = flow.request.model if flow.request else "unknown"
+        latency_ms = flow.timing.duration_ms or 0
+        
+        stats_manager.record_request(
+            account_id=account_id,
+            model=model,
+            success=success,
+            latency_ms=latency_ms,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+        )
+
     def get_flow(self, flow_id: str) -> Optional[LLMFlow]:
         """获取 Flow"""
         return self.store.get(flow_id)
@@ -562,19 +486,14 @@ class FlowMonitor:
         """获取统计"""
         return self.store.get_stats()
     
-    def export(self, flow_ids: List[str] = None, format: str = "jsonl") -> str:
+    def export(self, flow_ids: List[str] = None, format: str = "json") -> str:
         """导出 Flows"""
         if flow_ids:
             flows = [self.store.get(fid) for fid in flow_ids if self.store.get(fid)]
         else:
             flows = list(self.store.flows)
         
-        if format == "jsonl":
-            return self.store.export_jsonl(flows)
-        elif format == "markdown" and len(flows) == 1:
-            return self.store.export_markdown(flows[0])
-        else:
-            return json.dumps([f.to_dict() for f in flows], ensure_ascii=False, indent=2)
+        return json.dumps([f.to_dict() for f in flows], ensure_ascii=False, indent=2)
 
     def _write_flow_jsonl(self, flow: LLMFlow):
         """将 Flow 写入 JSONL 日志文件"""

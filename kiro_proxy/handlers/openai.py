@@ -10,7 +10,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
+from ..core import state, is_retryable_error, RetryContext, handle_429
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -226,14 +226,7 @@ async def handle_chat_completions(request: Request):
                 continue
             raise HTTPException(500, str(e))
     finally:
-        # 记录统计
-        duration = (time.time() - start_time) * 1000
-        stats_manager.record_request(
-            account_id=current_account.id if current_account else "unknown",
-            model=model,
-            success=status_code == 200,
-            latency_ms=duration
-        )
+        pass
     
     if stream:
         async def generate():

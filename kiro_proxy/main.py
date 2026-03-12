@@ -383,7 +383,6 @@ async def api_flows(
     account_id: str = None,
     state: str = None,
     has_error: bool = None,
-    bookmarked: bool = None,
     search: str = None,
     limit: int = 50,
     offset: int = 0,
@@ -395,7 +394,6 @@ async def api_flows(
         account_id=account_id,
         state_filter=state,
         has_error=has_error,
-        bookmarked=bookmarked,
         search=search,
         limit=limit,
         offset=offset,
@@ -414,28 +412,7 @@ async def api_flow_detail(flow_id: str):
     return await admin.get_flow_detail(flow_id)
 
 
-@app.post("/api/flows/{flow_id}/bookmark")
-async def api_bookmark_flow(flow_id: str, request: Request):
-    """书签 Flow"""
-    return await admin.bookmark_flow(flow_id, request)
 
-
-@app.post("/api/flows/{flow_id}/note")
-async def api_add_flow_note(flow_id: str, request: Request):
-    """添加 Flow 备注"""
-    return await admin.add_flow_note(flow_id, request)
-
-
-@app.post("/api/flows/{flow_id}/tag")
-async def api_add_flow_tag(flow_id: str, request: Request):
-    """添加 Flow 标签"""
-    return await admin.add_flow_tag(flow_id, request)
-
-
-@app.post("/api/flows/export")
-async def api_export_flows(request: Request):
-    """导出 Flows"""
-    return await admin.export_flows(request)
 
 
 # ==================== 远程登录 API ====================

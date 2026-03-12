@@ -9,7 +9,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, RetryableRequest, is_retryable_error, stats_manager, flow_monitor, TokenUsage, RetryContext, handle_429
+from ..core import state, RetryableRequest, is_retryable_error, flow_monitor, TokenUsage, RetryContext, handle_429
 
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error, TruncateStrategy
 from ..core.error_handler import classify_error, ErrorType, format_error_log
@@ -302,8 +302,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         if flow_id:
                             flow_monitor.fail_flow(flow_id, "rate_limit_error", "All accounts rate limited", 429)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"rate_limit_error","message":"All accounts rate limited"}}}}\n\n'
-                        duration = (time.time() - start_time) * 1000
-                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
                     # 处理可重试的服务端错误
@@ -316,8 +314,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         if flow_id:
                             flow_monitor.fail_flow(flow_id, "api_error", "Server error after retries", response.status_code)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Server error after retries"}}}}\n\n'
-                        duration = (time.time() - start_time) * 1000
-                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
                     if response.status_code != 200:
@@ -396,8 +392,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         if flow_id:
                             flow_monitor.fail_flow(flow_id, error_type, error_msg, response.status_code, error_str)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"{error_type}","message":"{error_msg}"}}}}\n\n'
-                        duration = (time.time() - start_time) * 1000
-                        stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
                     # 标记开始流式传输
@@ -455,8 +449,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
                     current_account.reset_quota_backoff()  # 成功后重置退避
                     get_rate_limiter().record_request(current_account.id)
-                    duration = (time.time() - start_time) * 1000
-                    stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=True, latency_ms=duration)
                     return
 
             except RequestsError as e:
@@ -473,8 +465,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 if flow_id:
                     flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
                 yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"{label} after retries"}}}}\n\n'
-                duration = (time.time() - start_time) * 1000
-                stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                 return
             except Exception as e:
                 # 检查是否为可重试的网络错误
@@ -486,8 +476,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 if flow_id:
                     flow_monitor.fail_flow(flow_id, "api_error", str(e), 500)
                 yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"{str(e)}"}}}}\n\n'
-                duration = (time.time() - start_time) * 1000
-                stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                 return
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -630,14 +618,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
             should_log = True
             raise HTTPException(500, str(e))
         finally:
-            if should_log:
-                duration = (time.time() - start_time) * 1000
-                stats_manager.record_request(
-                    account_id=current_account.id if current_account else "unknown",
-                    model=model,
-                    success=status_code == 200,
-                    latency_ms=duration
-                )
+            pass
     
     raise HTTPException(503, "All retries exhausted")
 

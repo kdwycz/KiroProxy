@@ -12,7 +12,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
+from ..core import state, is_retryable_error, RetryContext, handle_429
 from ..core.history_manager import HistoryManager, get_history_config
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -538,13 +538,7 @@ async def handle_responses(request: Request):
         status_code = 500
         raise
     finally:
-        duration = (time.time() - start_time) * 1000
-        stats_manager.record_request(
-            account_id=account.id if account else "unknown",
-            model=model,
-            success=status_code == 200,
-            latency_ms=duration
-        )
+        pass
 
 
 def _build_response(result: dict, model: str, response_id: str) -> dict:
@@ -665,13 +659,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             "error": {"code": error_code, "message": error_msg[:200]}
                         }
                     })
-                    duration = (time.time() - start_time) * 1000
-                    stats_manager.record_request(
-                        account_id=account.id if account else "unknown",
-                        model=model,
-                        success=False,
-                        latency_ms=duration
-                    )
                     return
                     
                 # 1. response.created
@@ -736,13 +723,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                     "error": {"code": "internal_error", "message": str(e)[:200]}
                 }
             })
-            duration = (time.time() - start_time) * 1000
-            stats_manager.record_request(
-                account_id=account.id if account else "unknown",
-                model=model,
-                success=False,
-                latency_ms=duration
-            )
             return
         
         # 4. response.output_item.done - 消息完成
@@ -813,14 +793,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
             }
         })
 
-        # 记录成功的流式请求统计
-        duration = (time.time() - start_time) * 1000
-        stats_manager.record_request(
-            account_id=account.id if account else "unknown",
-            model=model,
-            success=True,
-            latency_ms=duration
-        )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

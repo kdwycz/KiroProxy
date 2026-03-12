@@ -9,7 +9,7 @@ from curl_cffi.requests.errors import RequestsError
 from fastapi import Request, HTTPException
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
+from ..core import state, is_retryable_error, RetryContext, handle_429
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -214,14 +214,7 @@ async def handle_generate_content(model_name: str, request: Request):
                 continue
             raise HTTPException(500, str(e))
     finally:
-        # 记录统计
-        duration = (time.time() - start_time) * 1000
-        stats_manager.record_request(
-            account_id=current_account.id if current_account else "unknown",
-            model=model,
-            success=error_msg is None,
-            latency_ms=duration
-        )
+        pass
     
     # 使用转换函数生成 Gemini 格式响应
     return convert_kiro_response_to_gemini(result, model)

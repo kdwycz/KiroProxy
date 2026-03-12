@@ -152,42 +152,12 @@ HTML_HELP = '''
 HTML_DASHBOARD = '''
 <div class="panel" id="dashboard">
   <div class="card">
-    <h3>服务状态 <button class="secondary small" onclick="loadStats()">刷新</button></h3>
+    <h3>服务概览 <button class="secondary small" onclick="loadStats()">刷新</button></h3>
     <div class="stats-grid" id="statsGrid"></div>
   </div>
   <div class="card">
     <h3>配额状态</h3>
     <div id="quotaStatus"></div>
-  </div>
-  <div class="card">
-    <h3>Flow 统计 <button class="secondary small" onclick="loadFlowStats()">刷新</button></h3>
-    <div class="stats-grid" id="flowStatsGrid"></div>
-  </div>
-  <div class="card">
-    <h3>流量监控</h3>
-    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
-      <select id="flowProtocol" onchange="loadFlows()">
-        <option value="">全部协议</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="openai">OpenAI</option>
-        <option value="gemini">Gemini</option>
-      </select>
-      <select id="flowState" onchange="loadFlows()">
-        <option value="">全部状态</option>
-        <option value="completed">完成</option>
-        <option value="error">错误</option>
-        <option value="streaming">流式中</option>
-        <option value="pending">等待中</option>
-      </select>
-      <input type="text" id="flowSearch" placeholder="搜索内容..." style="flex:1;min-width:150px" onkeydown="if(event.key==='Enter')loadFlows()">
-      <button class="secondary" onclick="loadFlows()">搜索</button>
-      <button class="secondary" onclick="exportFlows()">导出</button>
-    </div>
-    <div id="flowList"></div>
-  </div>
-  <div class="card" id="flowDetail" style="display:none">
-    <h3>Flow 详情 <button class="secondary small" onclick="$('#flowDetail').style.display='none'">关闭</button></h3>
-    <div id="flowDetailContent"></div>
   </div>
   <div class="card">
     <h3>速度测试</h3>
@@ -289,24 +259,56 @@ HTML_ACCOUNTS = '''
 HTML_LOGS = '''
 <div class="panel" id="logs">
   <div class="card">
-    <h3>系统日志 <button class="secondary small" onclick="loadLogs()">刷新</button></h3>
-    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
-      <select id="logDate" onchange="loadLogs()" style="min-width:120px">
-        <option value="">今天</option>
-      </select>
-      <select id="logLevel" onchange="filterLogs()" style="min-width:100px">
-        <option value="">全部级别</option>
-        <option value="DEBUG">DEBUG</option>
-        <option value="INFO">INFO</option>
-        <option value="WARNING">WARNING</option>
-        <option value="ERROR">ERROR</option>
-        <option value="CRITICAL">CRITICAL</option>
-      </select>
-      <input type="text" id="logSearch" placeholder="搜索日志..." style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')loadLogs()">
-      <button class="secondary" onclick="loadLogs()">搜索</button>
+    <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+      <button id="logTabSystem" class="small" onclick="switchLogTab('system')">系统日志</button>
+      <button id="logTabRequest" class="secondary small" onclick="switchLogTab('request')">请求日志</button>
     </div>
-    <div id="logList" style="max-height:70vh;overflow-y:auto;font-family:monospace;font-size:0.8rem;background:var(--bg);border-radius:6px;padding:0.75rem"></div>
-    <div style="margin-top:0.5rem;color:var(--muted);font-size:0.75rem" id="logInfo"></div>
+    <div id="logViewSystem">
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+        <select id="logDate" onchange="loadLogs()" style="min-width:120px">
+          <option value="">今天</option>
+        </select>
+        <select id="logLevel" onchange="filterLogs()" style="min-width:100px">
+          <option value="">全部级别</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+          <option value="CRITICAL">CRITICAL</option>
+        </select>
+        <input type="text" id="logSearch" placeholder="搜索日志..." style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')loadLogs()">
+        <button class="secondary" onclick="loadLogs()">搜索</button>
+      </div>
+      <div id="logList" style="max-height:70vh;overflow-y:auto;font-family:monospace;font-size:0.8rem;background:var(--bg);border-radius:6px;padding:0.75rem"></div>
+      <div style="margin-top:0.5rem;color:var(--muted);font-size:0.75rem" id="logInfo"></div>
+    </div>
+    <div id="logViewRequest" style="display:none">
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+        <select id="flowProtocol" onchange="loadFlows()">
+          <option value="">全部协议</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini</option>
+        </select>
+        <select id="flowState" onchange="loadFlows()">
+          <option value="">全部状态</option>
+          <option value="completed">完成</option>
+          <option value="error">错误</option>
+          <option value="streaming">流式中</option>
+          <option value="pending">等待中</option>
+        </select>
+        <input type="text" id="flowSearch" placeholder="搜索内容..." style="flex:1;min-width:150px" onkeydown="if(event.key==='Enter')loadFlows()">
+        <button class="secondary" onclick="loadFlows()">搜索</button>
+      </div>
+      <div id="flowList"></div>
+      <div id="flowDetail" style="display:none;margin-top:1rem;padding:1rem;border:1px solid var(--border);border-radius:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+          <h4>Flow 详情</h4>
+          <button class="secondary small" onclick="$('#flowDetail').style.display='none'">关闭</button>
+        </div>
+        <div id="flowDetailContent"></div>
+      </div>
+    </div>
   </div>
 </div>
 '''
@@ -609,7 +611,7 @@ $$('.tab').forEach(t=>t.onclick=()=>{
   t.classList.add('active');
   $('#'+t.dataset.tab).classList.add('active');
   stopLogsAutoRefresh();
-  if(t.dataset.tab==='dashboard'){loadStats();loadQuota();loadFlowStats();loadFlows();}
+  if(t.dataset.tab==='dashboard'){loadStats();loadQuota();}
   if(t.dataset.tab==='logs'){loadLogDates();startLogsAutoRefresh();}
   if(t.dataset.tab==='accounts')loadAccounts();
 });
@@ -725,17 +727,24 @@ loadDocs();
 '''
 
 JS_STATS = '''
-// Stats
+// Stats - unified
 async function loadStats(){
   try{
-    const r=await fetch('/api/stats');
-    const d=await r.json();
+    const [statsR, flowR]=await Promise.all([
+      fetch('/api/stats'),
+      fetch('/api/flows/stats')
+    ]);
+    const d=await statsR.json();
+    const f=await flowR.json();
     $('#statsGrid').innerHTML=`
       <div class="stat-item"><div class="stat-value">${d.total_requests}</div><div class="stat-label">${_('monitor.totalRequests')}</div></div>
       <div class="stat-item"><div class="stat-value">${d.total_errors}</div><div class="stat-label">${_('monitor.errorCount')}</div></div>
       <div class="stat-item"><div class="stat-value">${d.error_rate}</div><div class="stat-label">${_('monitor.errorRate')}</div></div>
+      <div class="stat-item"><div class="stat-value">${f.avg_duration_ms!==undefined?f.avg_duration_ms.toFixed(0)+'ms':'-'}</div><div class="stat-label">${_('flows.avgLatency')}</div></div>
       <div class="stat-item"><div class="stat-value">${d.accounts_available}/${d.accounts_total}</div><div class="stat-label">${_('monitor.availableAccounts')}</div></div>
       <div class="stat-item"><div class="stat-value">${d.accounts_cooldown||0}</div><div class="stat-label">${_('monitor.cooldownAccounts')}</div></div>
+      <div class="stat-item"><div class="stat-value">${f.total_tokens_in||0}</div><div class="stat-label">${_('flows.inputTokens')}</div></div>
+      <div class="stat-item"><div class="stat-value">${f.total_tokens_out||0}</div><div class="stat-label">${_('flows.outputTokens')}</div></div>
     `;
   }catch(e){console.error(e)}
 }
@@ -1323,25 +1332,8 @@ async function cancelKiroLogin(){
 }
 '''
 
-
 JS_FLOWS = '''
 // Flow Monitor
-async function loadFlowStats(){
-  try{
-    const r=await fetch('/api/flows/stats');
-    const d=await r.json();
-    $('#flowStatsGrid').innerHTML=`
-      <div class="stat-item"><div class="stat-value">${d.total_flows}</div><div class="stat-label">${_('flows.totalRequests')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.completed}</div><div class="stat-label">${_('flows.completed')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.errors}</div><div class="stat-label">${_('flows.error')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.error_rate}</div><div class="stat-label">${_('flows.errorRate')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.avg_duration_ms.toFixed(0)}ms</div><div class="stat-label">${_('flows.avgLatency')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.total_tokens_in}</div><div class="stat-label">${_('flows.inputTokens')}</div></div>
-      <div class="stat-item"><div class="stat-value">${d.total_tokens_out}</div><div class="stat-label">${_('flows.outputTokens')}</div></div>
-    `;
-  }catch(e){console.error(e)}
-}
-
 async function loadFlows(){
   try{
     const protocol=$('#flowProtocol').value;
@@ -1371,13 +1363,11 @@ async function loadFlows(){
             <div style="display:flex;align-items:center;gap:0.5rem">
               <span class="badge ${stateBadge}">${stateText}</span>
               <span style="font-weight:500">${model}</span>
-              ${f.bookmarked?'<span style="color:var(--warn)">★</span>':''}
             </div>
             <div style="color:var(--muted);font-size:0.75rem;margin-top:0.25rem">
-              ${time} · ${duration} · ${tokens} tokens · ${f.protocol}
+              ${time} \u00b7 ${duration} \u00b7 ${tokens} tokens \u00b7 ${f.protocol}
             </div>
           </div>
-          <button class="secondary small" onclick="event.stopPropagation();toggleBookmark('${f.id}',${!f.bookmarked})">${f.bookmarked?_('flows.unbookmark'):_('flows.bookmark')}</button>
         </div>
       `;
     }).join('');
@@ -1403,22 +1393,20 @@ async function viewFlow(id){
   }catch(e){alert('获取详情失败: '+e.message)}
 }
 
-async function toggleBookmark(id,bookmarked){
-  await fetch('/api/flows/'+id+'/bookmark',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bookmarked})});
-  loadFlows();
-}
-
-async function exportFlows(){
-  try{
-    const r=await fetch('/api/flows/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format:'json'})});
-    const d=await r.json();
-    const blob=new Blob([d.content],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download='flows_'+new Date().toISOString().slice(0,10)+'.json';
-    a.click();
-  }catch(e){alert('导出失败: '+e.message)}
+function switchLogTab(tab){
+  if(tab==='system'){
+    $('#logViewSystem').style.display='block';
+    $('#logViewRequest').style.display='none';
+    $('#logTabSystem').className='small';
+    $('#logTabRequest').className='secondary small';
+    loadLogs();
+  }else{
+    $('#logViewSystem').style.display='none';
+    $('#logViewRequest').style.display='block';
+    $('#logTabSystem').className='secondary small';
+    $('#logTabRequest').className='small';
+    loadFlows();
+  }
 }
 '''
 

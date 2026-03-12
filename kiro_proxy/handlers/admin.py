@@ -755,7 +755,6 @@ async def get_flows(
     account_id: str = None,
     state_filter: str = None,
     has_error: bool = None,
-    bookmarked: bool = None,
     search: str = None,
     limit: int = 50,
     offset: int = 0,
@@ -776,7 +775,6 @@ async def get_flows(
         account_id=account_id,
         state=state_enum,
         has_error=has_error,
-        bookmarked=bookmarked,
         search=search,
         limit=limit,
         offset=offset,
@@ -801,39 +799,6 @@ async def get_flow_stats():
     return flow_monitor.get_stats()
 
 
-async def bookmark_flow(flow_id: str, request: Request):
-    """书签 Flow"""
-    body = await request.json()
-    bookmarked = body.get("bookmarked", True)
-    flow_monitor.bookmark_flow(flow_id, bookmarked)
-    return {"ok": True}
-
-
-async def add_flow_note(flow_id: str, request: Request):
-    """添加 Flow 备注"""
-    body = await request.json()
-    note = body.get("note", "")
-    flow_monitor.add_note(flow_id, note)
-    return {"ok": True}
-
-
-async def add_flow_tag(flow_id: str, request: Request):
-    """添加 Flow 标签"""
-    body = await request.json()
-    tag = body.get("tag", "")
-    if tag:
-        flow_monitor.add_tag(flow_id, tag)
-    return {"ok": True}
-
-
-async def export_flows(request: Request):
-    """导出 Flows"""
-    body = await request.json()
-    flow_ids = body.get("flow_ids", [])
-    format = body.get("format", "json")
-    
-    content = flow_monitor.export(flow_ids if flow_ids else None, format)
-    return {"content": content, "format": format}
 
 
 # ==================== Usage API ====================
