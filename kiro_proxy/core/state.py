@@ -1,7 +1,5 @@
 """全局状态管理"""
 import time
-from collections import deque
-from dataclasses import dataclass
 from typing import Optional, List, Dict, Set
 from pathlib import Path
 
@@ -13,30 +11,12 @@ from .account import Account
 from .persistence import load_accounts, save_accounts
 
 
-@dataclass
-class RequestLog:
-    """请求日志"""
-    id: str
-    timestamp: float
-    method: str
-    path: str
-    model: str
-    account_id: Optional[str]
-    status: int
-    duration_ms: float
-    tokens_in: int = 0
-    tokens_out: int = 0
-    error: Optional[str] = None
-
 
 class ProxyState:
     """全局状态管理"""
     
     def __init__(self):
         self.accounts: List[Account] = []
-        self.request_logs: deque = deque(maxlen=1000)
-        self.total_requests: int = 0
-        self.total_errors: int = 0
         self.session_locks: Dict[str, str] = {}
         self.session_timestamps: Dict[str, float] = {}
         self.start_time: float = time.time()
@@ -82,6 +62,7 @@ class ProxyState:
     
     def get_available_account(self, session_id: Optional[str] = None) -> Optional[Account]:
         """获取可用账号（支持会话粘性）"""
+        from .stats import stats_manager
         quota_manager.cleanup_expired()
         
         # 会话粘性
@@ -98,7 +79,7 @@ class ProxyState:
         if not available:
             return None
         
-        account = min(available, key=lambda a: a.request_count)
+        account = min(available, key=lambda a: stats_manager.by_account[a.id].total_requests)
         
         if session_id:
             self.session_locks[session_id] = account.id
@@ -108,12 +89,13 @@ class ProxyState:
     
     def get_next_available_account(self, exclude_ids: Set[str] = None) -> Optional[Account]:
         """获取下一个可用账号（排除指定账号集合）"""
+        from .stats import stats_manager
         if exclude_ids is None:
             exclude_ids = set()
         available = [a for a in self.accounts if a.is_available() and a.id not in exclude_ids]
         if not available:
             return None
-        return min(available, key=lambda a: a.request_count)
+        return min(available, key=lambda a: stats_manager.by_account[a.id].total_requests)
     
     def get_shortest_cooldown(self) -> tuple:
         """获取所有冷却中账号的最短剩余冷却时间
@@ -162,25 +144,18 @@ class ProxyState:
                 })
         return results
     
-    def add_log(self, log: RequestLog):
-        """添加请求日志"""
-        self.request_logs.append(log)
-        self.total_requests += 1
-        if log.error:
-            self.total_errors += 1
-    
     def get_stats(self) -> dict:
-        """获取统计信息"""
+        """获取统计信息（代理 StatsManager 数据）"""
+        from .stats import stats_manager
         uptime = time.time() - self.start_time
         return {
             "uptime_seconds": int(uptime),
-            "total_requests": self.total_requests,
-            "total_errors": self.total_errors,
-            "error_rate": f"{(self.total_errors / max(1, self.total_requests) * 100):.1f}%",
+            "total_requests": stats_manager.total_requests,
+            "total_errors": stats_manager.total_errors,
+            "error_rate": f"{(stats_manager.total_errors / max(1, stats_manager.total_requests) * 100):.1f}%",
             "accounts_total": len(self.accounts),
             "accounts_available": len([a for a in self.accounts if a.is_available()]),
             "accounts_cooldown": len([a for a in self.accounts if a.status == CredentialStatus.COOLDOWN]),
-            "recent_logs": len(self.request_logs)
         }
     
     def get_accounts_status(self) -> List[dict]:

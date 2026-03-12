@@ -12,8 +12,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager
-from ..core.state import RequestLog
+from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
 from ..core.history_manager import HistoryManager, get_history_config
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -528,8 +527,7 @@ async def handle_responses(request: Request):
                 raise HTTPException(resp.status_code, resp.text)
 
             result = parse_event_stream_full(resp.content)
-            account.request_count += 1
-            account.last_used = time.time()
+            account.reset_quota_backoff()
             get_rate_limiter().record_request(account.id)
 
             return _build_response(result, model, log_id)
@@ -541,17 +539,6 @@ async def handle_responses(request: Request):
         raise
     finally:
         duration = (time.time() - start_time) * 1000
-        state.add_log(RequestLog(
-            id=log_id,
-            timestamp=time.time(),
-            method="POST",
-            path="/v1/responses",
-            model=model,
-            account_id=account.id if account else None,
-            status=status_code,
-            duration_ms=duration,
-            error=error_msg
-        ))
         stats_manager.record_request(
             account_id=account.id if account else "unknown",
             model=model,
@@ -679,17 +666,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                         }
                     })
                     duration = (time.time() - start_time) * 1000
-                    state.add_log(RequestLog(
-                        id=log_id,
-                        timestamp=time.time(),
-                        method="POST",
-                        path="/v1/responses (stream)",
-                        model=model,
-                        account_id=account.id if account else None,
-                        status=response.status_code,
-                        duration_ms=duration,
-                        error=error_msg[:200]
-                    ))
                     stats_manager.record_request(
                         account_id=account.id if account else "unknown",
                         model=model,
@@ -747,8 +723,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 if not full_content:
                     full_content = "".join(result.get("content", []))
                     
-                account.request_count += 1
-                account.last_used = time.time()
+                account.reset_quota_backoff()
                 get_rate_limiter().record_request(account.id)
                     
         except Exception as e:
@@ -762,17 +737,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 }
             })
             duration = (time.time() - start_time) * 1000
-            state.add_log(RequestLog(
-                id=log_id,
-                timestamp=time.time(),
-                method="POST",
-                path="/v1/responses (stream)",
-                model=model,
-                account_id=account.id if account else None,
-                status=500,
-                duration_ms=duration,
-                error=str(e)[:200]
-            ))
             stats_manager.record_request(
                 account_id=account.id if account else "unknown",
                 model=model,
@@ -849,19 +813,8 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
             }
         })
 
-        # 记录成功的流式请求日志
+        # 记录成功的流式请求统计
         duration = (time.time() - start_time) * 1000
-        state.add_log(RequestLog(
-            id=log_id,
-            timestamp=time.time(),
-            method="POST",
-            path="/v1/responses (stream)",
-            model=model,
-            account_id=account.id if account else None,
-            status=200,
-            duration_ms=duration,
-            error=None
-        ))
         stats_manager.record_request(
             account_id=account.id if account else "unknown",
             model=model,

@@ -129,11 +129,9 @@ HTML_HEADER = '''
 
 <div class="tabs">
   <div class="tab active" data-tab="help">帮助</div>
-  <div class="tab" data-tab="flows">流量</div>
-  <div class="tab" data-tab="monitor">监控</div>
+  <div class="tab" data-tab="dashboard">仪表盘</div>
   <div class="tab" data-tab="accounts">账号</div>
   <div class="tab" data-tab="logs">日志</div>
-  <div class="tab" data-tab="api">API</div>
   <div class="tab" data-tab="settings">设置</div>
 </div>
 '''
@@ -151,8 +149,16 @@ HTML_HELP = '''
 </div>
 '''
 
-HTML_FLOWS = '''
-<div class="panel" id="flows">
+HTML_DASHBOARD = '''
+<div class="panel" id="dashboard">
+  <div class="card">
+    <h3>服务状态 <button class="secondary small" onclick="loadStats()">刷新</button></h3>
+    <div class="stats-grid" id="statsGrid"></div>
+  </div>
+  <div class="card">
+    <h3>配额状态</h3>
+    <div id="quotaStatus"></div>
+  </div>
   <div class="card">
     <h3>Flow 统计 <button class="secondary small" onclick="loadFlowStats()">刷新</button></h3>
     <div class="stats-grid" id="flowStatsGrid"></div>
@@ -182,19 +188,6 @@ HTML_FLOWS = '''
   <div class="card" id="flowDetail" style="display:none">
     <h3>Flow 详情 <button class="secondary small" onclick="$('#flowDetail').style.display='none'">关闭</button></h3>
     <div id="flowDetailContent"></div>
-  </div>
-</div>
-'''
-
-HTML_MONITOR = '''
-<div class="panel" id="monitor">
-  <div class="card">
-    <h3>服务状态 <button class="secondary small" onclick="loadStats()">刷新</button></h3>
-    <div class="stats-grid" id="statsGrid"></div>
-  </div>
-  <div class="card">
-    <h3>配额状态</h3>
-    <div id="quotaStatus"></div>
   </div>
   <div class="card">
     <h3>速度测试</h3>
@@ -296,11 +289,24 @@ HTML_ACCOUNTS = '''
 HTML_LOGS = '''
 <div class="panel" id="logs">
   <div class="card">
-    <h3>请求日志 <button class="secondary small" onclick="loadLogs()">刷新</button></h3>
-    <table>
-      <thead><tr><th>时间</th><th>路径</th><th>模型</th><th>账号</th><th>状态</th><th>耗时</th></tr></thead>
-      <tbody id="logTable"></tbody>
-    </table>
+    <h3>系统日志 <button class="secondary small" onclick="loadLogs()">刷新</button></h3>
+    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+      <select id="logDate" onchange="loadLogs()" style="min-width:120px">
+        <option value="">今天</option>
+      </select>
+      <select id="logLevel" onchange="filterLogs()" style="min-width:100px">
+        <option value="">全部级别</option>
+        <option value="DEBUG">DEBUG</option>
+        <option value="INFO">INFO</option>
+        <option value="WARNING">WARNING</option>
+        <option value="ERROR">ERROR</option>
+        <option value="CRITICAL">CRITICAL</option>
+      </select>
+      <input type="text" id="logSearch" placeholder="搜索日志..." style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')loadLogs()">
+      <button class="secondary" onclick="loadLogs()">搜索</button>
+    </div>
+    <div id="logList" style="max-height:70vh;overflow-y:auto;font-family:monospace;font-size:0.8rem;background:var(--bg);border-radius:6px;padding:0.75rem"></div>
+    <div style="margin-top:0.5rem;color:var(--muted);font-size:0.75rem" id="logInfo"></div>
   </div>
 </div>
 '''
@@ -534,7 +540,7 @@ HTML_SETTINGS = '''
 </div>
 '''
 
-HTML_BODY = HTML_HEADER + HTML_HELP + HTML_FLOWS + HTML_MONITOR + HTML_ACCOUNTS + HTML_LOGS + HTML_API + HTML_SETTINGS
+HTML_BODY = HTML_HEADER + HTML_HELP + HTML_DASHBOARD + HTML_ACCOUNTS + HTML_LOGS + HTML_SETTINGS
 
 
 # ==================== JavaScript ====================
@@ -603,10 +609,9 @@ $$('.tab').forEach(t=>t.onclick=()=>{
   t.classList.add('active');
   $('#'+t.dataset.tab).classList.add('active');
   stopLogsAutoRefresh();
-  if(t.dataset.tab==='monitor'){loadStats();loadQuota();}
-  if(t.dataset.tab==='logs')startLogsAutoRefresh();
+  if(t.dataset.tab==='dashboard'){loadStats();loadQuota();loadFlowStats();loadFlows();}
+  if(t.dataset.tab==='logs'){loadLogDates();startLogsAutoRefresh();}
   if(t.dataset.tab==='accounts')loadAccounts();
-  if(t.dataset.tab==='flows'){loadFlowStats();loadFlows();}
 });
 '''
 
@@ -641,14 +646,14 @@ function copyRestartCmd(){
 }
 
 // URLs
-$('#baseUrl').textContent=location.origin;
+if($('#baseUrl'))$('#baseUrl').textContent=location.origin;
 $$('.pyUrl').forEach(e=>e.textContent=location.origin);
 '''
 
 JS_DOCS = '''
 // 文档浏览
-let docsData = [];
-let currentDoc = null;
+var docsData = [];
+var currentDoc = null;
 
 // 简单的 Markdown 渲染
 function renderMarkdown(text) {
@@ -773,28 +778,74 @@ async function runSpeedtest(){
 '''
 
 JS_LOGS = '''
-// Logs
-let logsInterval;
-async function loadLogs(){
+// Logs - disk log viewer
+var logsInterval;
+var allLogs = [];
+
+async function loadLogDates(){
   try{
-    const r=await fetch('/api/logs?limit=50');
+    const r=await fetch('/api/logs/dates');
     const d=await r.json();
-    $('#logTable').innerHTML=(d.logs||[]).map(l=>`
-      <tr>
-        <td>${new Date(l.timestamp*1000).toLocaleTimeString()}</td>
-        <td>${l.path}</td>
-        <td>${l.model||'-'}</td>
-        <td>${l.account_id||'-'}</td>
-        <td><span class="badge ${l.status<400?'success':l.status<500?'warn':'error'}">${l.status}</span></td>
-        <td>${l.duration_ms.toFixed(0)}ms</td>
-      </tr>
-    `).join('');
+    const select=$('#logDate');
+    select.innerHTML='<option value="">今天</option>';
+    (d.dates||[]).forEach(item=>{
+      if(item.date!=='today'){
+        const sizeKB=(item.size/1024).toFixed(1);
+        select.innerHTML+=`<option value="${item.date}">${item.date} (${sizeKB}KB)</option>`;
+      }
+    });
   }catch(e){console.error(e)}
 }
+
+async function loadLogs(){
+  try{
+    const date=$('#logDate').value;
+    const search=$('#logSearch').value;
+    let url='/api/logs?limit=500';
+    if(date)url+=`&date=${encodeURIComponent(date)}`;
+    if(search)url+=`&search=${encodeURIComponent(search)}`;
+    const r=await fetch(url);
+    const d=await r.json();
+    allLogs=d.logs||[];
+    renderLogs();
+    $('#logInfo').textContent=`共 ${d.total} 条日志`;
+  }catch(e){console.error(e)}
+}
+
+function filterLogs(){
+  renderLogs();
+}
+
+function renderLogs(){
+  const levelFilter=$('#logLevel').value;
+  const filtered=levelFilter?allLogs.filter(l=>l.level===levelFilter):allLogs;
+  
+  if(filtered.length===0){
+    $('#logList').innerHTML='<div style="color:var(--muted);padding:1rem;text-align:center">暂无日志</div>';
+    return;
+  }
+  
+  $('#logList').innerHTML=filtered.map(l=>{
+    const time=l.timestamp?new Date(l.timestamp*1000).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}):'';
+    const levelColors={DEBUG:'var(--muted)',INFO:'var(--info)',WARNING:'var(--warn)',ERROR:'var(--error)',CRITICAL:'var(--error)'};
+    const levelColor=levelColors[l.level]||'var(--text)';
+    const msg=escapeHtml(l.message);
+    if(l.level==='RAW'){
+      return `<div style="padding:2px 0;color:var(--muted)">${msg}</div>`;
+    }
+    return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--muted)">${time}</span>
+      <span style="color:${levelColor};font-weight:500;min-width:60px;display:inline-block"> ${l.level.padEnd(7)} </span>
+      <span style="color:var(--muted);font-size:0.7rem">${escapeHtml(l.source||'')} </span>
+      <span>${msg}</span>
+    </div>`;
+  }).join('');
+}
+
 function startLogsAutoRefresh(){
   if(logsInterval)clearInterval(logsInterval);
   loadLogs();
-  logsInterval=setInterval(loadLogs,3000);
+  logsInterval=setInterval(loadLogs,5000);
 }
 function stopLogsAutoRefresh(){
   if(logsInterval){clearInterval(logsInterval);logsInterval=null;}
@@ -813,9 +864,10 @@ async function loadAccounts(){
       return;
     }
     $('#accountList').innerHTML=d.accounts.map(a=>{
-      const statusBadge=a.status==='active'?'success':a.status==='cooldown'?'warn':a.status==='suspended'?'error':'error';
+      const effectiveStatus=a.enabled?a.status:'disabled';
+      const statusBadge=effectiveStatus==='active'?'success':effectiveStatus==='cooldown'?'warn':effectiveStatus==='disabled'?'info':'error';
       const statusTextMap={active:_('accounts.available'),cooldown:_('accounts.cooldown'),unhealthy:_('accounts.unhealthy'),disabled:_('common.disabled'),suspended:_('accounts.suspended')};
-      const statusText=statusTextMap[a.status]||a.status;
+      const statusText=statusTextMap[effectiveStatus]||effectiveStatus;
       const authBadge=a.auth_method==='idc'?'info':'success';
       const authText=a.auth_method==='idc'?'IdC':'Social';
       const tokenStatus=a.token_expired?_('accounts.tokenExpired'):a.token_expiring_soon?_('accounts.tokenExpiring'):_('accounts.tokenValid');
@@ -1007,7 +1059,7 @@ async function checkTokens(){
 }
 
 // 远程登录链接
-let remoteLoginPollTimer=null;
+var remoteLoginPollTimer=null;
 
 async function createRemoteLogin(){
   try{
@@ -1124,8 +1176,8 @@ function importAccounts(){
 
 JS_LOGIN = '''
 // Kiro 在线登录
-let loginPollTimer=null;
-let selectedBrowser='default';
+var loginPollTimer=null;
+var selectedBrowser='default';
 
 async function showLoginOptions(){
   try{
@@ -1509,7 +1561,7 @@ loadHistoryConfig();
 loadRateLimitConfig();
 '''
 
-JS_SCRIPTS = JS_UTILS + JS_TABS + JS_STATUS + JS_DOCS + JS_STATS + JS_LOGS + JS_ACCOUNTS + JS_LOGIN + JS_FLOWS + JS_SETTINGS
+JS_SCRIPTS = JS_UTILS + JS_STATUS + JS_DOCS + JS_STATS + JS_LOGS + JS_ACCOUNTS + JS_LOGIN + JS_FLOWS + JS_SETTINGS + JS_TABS
 
 
 # ==================== 组装最终 HTML ====================
@@ -1620,11 +1672,9 @@ function _(key) {{ return I18N[key] || key; }}
 
 <div class="tabs">
   <div class="tab active" data-tab="help">{t('tab.help')}</div>
-  <div class="tab" data-tab="flows">{t('tab.flows')}</div>
-  <div class="tab" data-tab="monitor">{t('tab.monitor')}</div>
+  <div class="tab" data-tab="dashboard">{t('tab.dashboard') if t('tab.dashboard') != 'tab.dashboard' else ('Dashboard' if lang == 'en' else '仪表盘')}</div>
   <div class="tab" data-tab="accounts">{t('tab.accounts')}</div>
   <div class="tab" data-tab="logs">{t('tab.logs')}</div>
-  <div class="tab" data-tab="api">API</div>
   <div class="tab" data-tab="settings">{t('tab.settings')}</div>
 </div>
 '''
@@ -1678,7 +1728,10 @@ function _(key) {{ return I18N[key] || key; }}
         '>添加账号<': f'>{t("accounts.add")}<',
         '>扫描结果<': f'>{t("accounts.scanResults")}<',
         # Logs
-        '>请求日志 <': f'>{t("logs.title")} <',
+        '>系统日志 <': f'>{t("logs.title") if t("logs.title") != "logs.title" else ("System Logs" if lang == "en" else "系统日志")} <',
+        '>今天<': f'>{"今天" if lang == "zh" else "Today"}<',
+        '>全部级别<': f'>{"全部级别" if lang == "zh" else "All Levels"}<',
+        'placeholder="搜索日志..."': f'placeholder="{"Search logs..." if lang == "en" else "搜索日志..."}"',
         '>清空<': f'>{t("logs.clear")}<',
         '>时间<': f'>{t("logs.time")}<',
         '>模型<': f'>{t("logs.model")}<',
@@ -1770,7 +1823,7 @@ function _(key) {{ return I18N[key] || key; }}
     }
     
     # 组装并翻译 HTML
-    html_content = HTML_HELP + HTML_FLOWS + HTML_MONITOR + HTML_ACCOUNTS + HTML_LOGS + HTML_API + HTML_SETTINGS
+    html_content = HTML_HELP + HTML_DASHBOARD + HTML_ACCOUNTS + HTML_LOGS + HTML_SETTINGS
     for zh, translated in translations.items():
         html_content = html_content.replace(zh, translated)
     

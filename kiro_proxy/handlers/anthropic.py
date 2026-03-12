@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
 from ..core import state, RetryableRequest, is_retryable_error, stats_manager, flow_monitor, TokenUsage, RetryContext, handle_429
-from ..core.state import RequestLog
+
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error, TruncateStrategy
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -303,11 +303,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             flow_monitor.fail_flow(flow_id, "rate_limit_error", "All accounts rate limited", 429)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"rate_limit_error","message":"All accounts rate limited"}}}}\n\n'
                         duration = (time.time() - start_time) * 1000
-                        state.add_log(RequestLog(
-                            id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                            model=model, account_id=current_account.id if current_account else None,
-                            status=429, duration_ms=duration, error="All accounts rate limited"
-                        ))
                         stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
@@ -322,11 +317,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             flow_monitor.fail_flow(flow_id, "api_error", "Server error after retries", response.status_code)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"Server error after retries"}}}}\n\n'
                         duration = (time.time() - start_time) * 1000
-                        state.add_log(RequestLog(
-                            id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                            model=model, account_id=current_account.id if current_account else None,
-                            status=response.status_code, duration_ms=duration, error="Server error after retries"
-                        ))
                         stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
@@ -407,11 +397,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             flow_monitor.fail_flow(flow_id, error_type, error_msg, response.status_code, error_str)
                         yield f'event: error\ndata: {{"type":"error","error":{{"type":"{error_type}","message":"{error_msg}"}}}}\n\n'
                         duration = (time.time() - start_time) * 1000
-                        state.add_log(RequestLog(
-                            id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                            model=model, account_id=current_account.id if current_account else None,
-                            status=response.status_code, duration_ms=duration, error=error_msg
-                        ))
                         stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                         return
 
@@ -468,16 +453,9 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             ),
                         )
 
-                    current_account.request_count += 1
-                    current_account.last_used = time.time()
                     current_account.reset_quota_backoff()  # 成功后重置退避
                     get_rate_limiter().record_request(current_account.id)
                     duration = (time.time() - start_time) * 1000
-                    state.add_log(RequestLog(
-                        id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                        model=model, account_id=current_account.id if current_account else None,
-                        status=200, duration_ms=duration, error=None
-                    ))
                     stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=True, latency_ms=duration)
                     return
 
@@ -496,11 +474,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                     flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
                 yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"{label} after retries"}}}}\n\n'
                 duration = (time.time() - start_time) * 1000
-                state.add_log(RequestLog(
-                    id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                    model=model, account_id=current_account.id if current_account else None,
-                    status=error_status, duration_ms=duration, error=f"{label} after retries"
-                ))
                 stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                 return
             except Exception as e:
@@ -514,11 +487,6 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                     flow_monitor.fail_flow(flow_id, "api_error", str(e), 500)
                 yield f'event: error\ndata: {{"type":"error","error":{{"type":"api_error","message":"{str(e)}"}}}}\n\n'
                 duration = (time.time() - start_time) * 1000
-                state.add_log(RequestLog(
-                    id=log_id, timestamp=time.time(), method="POST", path="/v1/messages",
-                    model=model, account_id=current_account.id if current_account else None,
-                    status=500, duration_ms=duration, error=str(e)
-                ))
                 stats_manager.record_request(account_id=current_account.id if current_account else "unknown", model=model, success=False, latency_ms=duration)
                 return
 
@@ -610,8 +578,6 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     raise HTTPException(status, error_message)
 
                 result = parse_event_stream_full(response.content)
-                current_account.request_count += 1
-                current_account.last_used = time.time()
                 current_account.reset_quota_backoff()  # 成功后重置退避
                 get_rate_limiter().record_request(current_account.id)
 
@@ -666,18 +632,6 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
         finally:
             if should_log:
                 duration = (time.time() - start_time) * 1000
-                state.add_log(RequestLog(
-                    id=log_id,
-                    timestamp=time.time(),
-                    method="POST",
-                    path="/v1/messages",
-                    model=model,
-                    account_id=current_account.id if current_account else None,
-                    status=status_code,
-                    duration_ms=duration,
-                    error=error_msg
-                ))
-                # 记录统计
                 stats_manager.record_request(
                     account_id=current_account.id if current_account else "unknown",
                     model=model,

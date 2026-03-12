@@ -11,7 +11,6 @@ from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
 from ..core import state, is_retryable_error, stats_manager, RetryContext, handle_429
-from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
@@ -200,8 +199,6 @@ async def handle_chat_completions(request: Request):
                     raise HTTPException(resp.status_code, error.user_message)
                 
                 content = parse_event_stream(resp.content)
-                current_account.request_count += 1
-                current_account.last_used = time.time()
                 current_account.reset_quota_backoff()  # 成功后重置退避
                 get_rate_limiter().record_request(current_account.id)
                 break
@@ -229,21 +226,8 @@ async def handle_chat_completions(request: Request):
                 continue
             raise HTTPException(500, str(e))
     finally:
-        # 记录日志
-        duration = (time.time() - start_time) * 1000
-        state.add_log(RequestLog(
-            id=log_id,
-            timestamp=time.time(),
-            method="POST",
-            path="/v1/chat/completions",
-            model=model,
-            account_id=current_account.id if current_account else None,
-            status=status_code,
-            duration_ms=duration,
-            error=error_msg
-        ))
-
         # 记录统计
+        duration = (time.time() - start_time) * 1000
         stats_manager.record_request(
             account_id=current_account.id if current_account else "unknown",
             model=model,

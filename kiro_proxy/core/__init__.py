@@ -1,5 +1,5 @@
 """核心模块"""
-from .state import state, ProxyState, RequestLog
+from .state import state, ProxyState
 from .account import Account
 from .persistence import load_config, save_config, CONFIG_FILE
 from .retry import RetryableRequest, is_retryable_error, RETRYABLE_STATUS_CODES, RetryContext, handle_429
@@ -22,7 +22,7 @@ from .settings import Settings, get_settings, reload_settings
 from .logger import logger, setup_logging
 
 __all__ = [
-    "state", "ProxyState", "RequestLog", "Account", 
+    "state", "ProxyState", "Account", 
     "load_config", "save_config", "CONFIG_FILE",
     "RetryableRequest", "is_retryable_error", "RETRYABLE_STATUS_CODES",
     "scheduler", "stats_manager",

@@ -20,9 +20,7 @@ class Account:
     name: str
     token_path: str
     enabled: bool = True
-    request_count: int = 0
-    error_count: int = 0
-    last_used: Optional[float] = None
+
     status: CredentialStatus = CredentialStatus.ACTIVE
     
     _credentials: Optional[KiroCredentials] = field(default=None, repr=False)
@@ -133,7 +131,6 @@ class Account:
         """标记配额超限（始终生效，使用指数退避冷却时间）"""
         quota_manager.mark_exceeded(self.id, reason)
         self.status = CredentialStatus.COOLDOWN
-        self.error_count += 1
     
     def reset_quota_backoff(self):
         """重置配额退避级别（成功请求时调用）"""
@@ -142,8 +139,10 @@ class Account:
             self.status = CredentialStatus.ACTIVE
     
     def get_status_info(self) -> dict:
-        """获取状态信息"""
+        """获取状态信息（统计数据从 StatsManager 读取）"""
+        from .stats import stats_manager
         creds = self.get_credentials()
+        acc_stats = stats_manager.get_account_stats(self.id)
         
         return {
             "id": self.id,
@@ -151,8 +150,8 @@ class Account:
             "enabled": self.enabled,
             "status": self.status.value,
             "available": self.is_available(),
-            "request_count": self.request_count,
-            "error_count": self.error_count,
+            "request_count": acc_stats["total_requests"],
+            "error_count": acc_stats["total_errors"],
             "rate_limit": quota_manager.get_rate_limit_info(self.id),
             "token_expired": self.is_token_expired() if creds else None,
             "token_expiring_soon": self.is_token_expiring_soon() if creds else None,

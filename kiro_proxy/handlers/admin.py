@@ -2,10 +2,10 @@
 import json
 import uuid
 import time
+import re
 from curl_cffi import requests as curl_requests
 from pathlib import Path
 from datetime import datetime
-from dataclasses import asdict
 from fastapi import Request, HTTPException, Query
 
 from ..config import TOKEN_PATH, MODELS_URL
@@ -44,13 +44,104 @@ async def event_logging_batch(request: Request):
     return {"ok": True}
 
 
-async def get_logs(limit: int = Query(100, le=1000)):
-    """获取请求日志"""
-    logs = list(state.request_logs)[-limit:]
+async def get_logs(limit: int = Query(100, le=1000), date: str = Query(None), search: str = Query(None)):
+    """获取请求日志（从磁盘日志文件读取）"""
+    from ..core.settings import get_settings
+    settings = get_settings()
+    log_dir = settings.logging.log_dir
+    
+    # 确定要读取的日志文件
+    if date:
+        # 读取指定日期的轮转日志
+        log_file = log_dir / f"kiro-proxy.log.{date}"
+        if not log_file.exists():
+            # 尝试带时间戳的格式
+            candidates = list(log_dir.glob(f"kiro-proxy.log.{date}*"))
+            log_file = candidates[0] if candidates else None
+    else:
+        log_file = log_dir / "kiro-proxy.log"
+    
+    if not log_file or not log_file.exists():
+        return {"logs": [], "total": 0}
+    
+    # 读取并解析日志行
+    logs = []
+    try:
+        lines = log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+        # 从末尾读取，提高效率
+        for line in reversed(lines):
+            if len(logs) >= limit:
+                break
+            if not line.strip():
+                continue
+            
+            # 搜索过滤
+            if search and search.lower() not in line.lower():
+                continue
+            
+            # 解析 loguru 格式: "2026-03-12 10:30:00.123 | INFO    | module:func:line - message"
+            parsed = _parse_log_line(line)
+            if parsed:
+                logs.append(parsed)
+        
+    except Exception:
+        pass
+    
     return {
-        "logs": [asdict(log) for log in reversed(logs)],
-        "total": len(state.request_logs)
+        "logs": logs,
+        "total": len(logs)
     }
+
+
+def _parse_log_line(line: str) -> dict:
+    """解析 loguru 格式的日志行"""
+    # 格式: "YYYY-MM-DD HH:mm:ss.SSS | LEVEL   | name:function:line - message"
+    match = re.match(
+        r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \| (\w+)\s*\| ([^-]+)- (.+)',
+        line
+    )
+    if match:
+        timestamp_str, level, source, message = match.groups()
+        try:
+            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S.%f")
+            timestamp = dt.timestamp()
+        except ValueError:
+            timestamp = 0
+        return {
+            "timestamp": timestamp,
+            "level": level.strip(),
+            "source": source.strip(),
+            "message": message.strip(),
+        }
+    # 非标准格式行（续行等），返回原文
+    return {
+        "timestamp": 0,
+        "level": "RAW",
+        "source": "",
+        "message": line.strip(),
+    }
+
+
+async def get_log_dates():
+    """返回可用的日志日期列表"""
+    from ..core.settings import get_settings
+    settings = get_settings()
+    log_dir = settings.logging.log_dir
+    
+    dates = []
+    if log_dir.exists():
+        # 当前日志
+        current = log_dir / "kiro-proxy.log"
+        if current.exists():
+            dates.append({"date": "today", "file": "kiro-proxy.log", "size": current.stat().st_size})
+        
+        # 轮转的日志文件
+        for f in sorted(log_dir.glob("kiro-proxy.log.*"), reverse=True):
+            # 提取日期部分
+            suffix = f.name.replace("kiro-proxy.log.", "")
+            dates.append({"date": suffix, "file": f.name, "size": f.stat().st_size})
+    
+    return {"dates": dates}
 
 
 async def get_accounts():
@@ -65,15 +156,16 @@ async def get_account_detail(account_id: str):
     for acc in state.accounts:
         if acc.id == account_id:
             creds = acc.get_credentials()
+            acc_stats = stats_manager.get_account_stats(acc.id)
             return {
                 "id": acc.id,
                 "name": acc.name,
                 "enabled": acc.enabled,
                 "status": acc.status.value,
                 "available": acc.is_available(),
-                "request_count": acc.request_count,
-                "error_count": acc.error_count,
-                "last_used": acc.last_used,
+                "request_count": acc_stats["total_requests"],
+                "error_count": acc_stats["total_errors"],
+                "last_used": acc_stats["last_request"],
                 "token_path": acc.token_path,
                 "machine_id": acc.get_machine_id()[:16] + "...",
                 "credentials": {

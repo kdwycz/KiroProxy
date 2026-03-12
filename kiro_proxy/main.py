@@ -48,9 +48,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"配置已加载: proxy.quota_cooldown={settings.proxy.quota_cooldown_seconds}s, proxy.web_search={settings.proxy.web_search_enabled}")
 
     # 启动时
+    stats_manager.init()
+    await stats_manager.start_auto_save()
     await scheduler.start()
     yield
     # 关闭时
+    stats_manager.stop_auto_save()
+    stats_manager.save()
     await scheduler.stop()
 
 
@@ -179,8 +183,14 @@ async def api_stats():
 
 
 @app.get("/api/logs")
-async def api_logs(limit: int = 100):
-    return await admin.get_logs(limit)
+async def api_logs(limit: int = 100, date: str = None, search: str = None):
+    return await admin.get_logs(limit, date, search)
+
+
+@app.get("/api/logs/dates")
+async def api_log_dates():
+    """获取可用的日志日期列表"""
+    return await admin.get_log_dates()
 
 
 # ==================== 账号导入导出 API ====================
