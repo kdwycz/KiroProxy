@@ -27,6 +27,14 @@ from ..converters import (
 )
 
 
+try:
+    import tiktoken
+    _tokenizer = tiktoken.get_encoding("cl100k_base")
+except Exception as e:
+    logger.warning(f"Failed to initialize tiktoken: {e}")
+    _tokenizer = None
+
+
 def _extract_text_from_content(content) -> str:
     if content is None:
         return ""
@@ -48,7 +56,12 @@ def _extract_text_from_content(content) -> str:
 def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
-    return (len(text) + 3) // 4
+    if _tokenizer:
+        try:
+            return len(_tokenizer.encode(text, disallowed_special=()))
+        except Exception:
+            pass
+    return int(len(text) / 3.5)
 
 
 def _count_tokens_from_messages(messages, system: str = "") -> int:
@@ -84,6 +97,7 @@ def _handle_kiro_error(status_code: int, error_text: str, account):
         ErrorType.AUTH_FAILED: (401, "authentication_error"),
         ErrorType.SERVICE_UNAVAILABLE: (503, "api_error"),
         ErrorType.MODEL_UNAVAILABLE: (503, "overloaded_error"),
+        ErrorType.INVALID_REQUEST: (400, "invalid_request_error"),
         ErrorType.UNKNOWN: (500, "api_error"),
     }
     
@@ -227,9 +241,9 @@ async def handle_messages(request: Request):
     kiro_request = build_kiro_request(user_content, model, history, kiro_tools, images, tool_results)
     
     if stream:
-        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param))
+        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param), est_input_tokens=est_tokens)
     else:
-        return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param))
+        return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager, thinking_enabled=bool(thinking_param), est_input_tokens=est_tokens)
 
 
 
@@ -274,13 +288,15 @@ def _extract_stream_content(buffer: bytes, parse_pos: int) -> tuple:
     return results, parse_pos
 
 
-async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
+async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False, est_input_tokens=0):
     """Handle streaming responses with two-phase 429 retry strategy."""
     
     async def generate():
         nonlocal kiro_request, history
         current_account = account
         retry_count = 0
+        error_retry_count = 0
+        max_error_retries = 3
         max_retries = max(len(state.accounts), 3)
         retry_ctx = RetryContext()
         full_content = ""
@@ -306,10 +322,10 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
                     # 处理可重试的服务端错误
                     if is_retryable_error(response.status_code):
-                        if retry_count < max_retries:
-                            logger.error(f"服务端错误 {response.status_code}，重试 {retry_count + 1}/{max_retries}")
-                            retry_count += 1
-                            await asyncio.sleep(0.5 * (2 ** retry_count))
+                        if error_retry_count < max_error_retries:
+                            logger.error(f"服务端错误 {response.status_code}，重试 {error_retry_count + 1}/{max_error_retries}")
+                            error_retry_count += 1
+                            await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                             continue
                         if flow_id:
                             flow_monitor.fail_flow(flow_id, "api_error", "Server error after retries", response.status_code)
@@ -400,7 +416,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
 
                     # 正常处理响应
                     msg_id = f"msg_{log_id}"
-                    yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"{msg_id}","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
+                    yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"{msg_id}","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":{est_input_tokens},"output_tokens":0}}}}}}\n\n'
                     yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":0,"content_block":{{"type":"text","text":""}}}}\n\n'
                     yield f'event: ping\ndata: {{"type":"ping"}}\n\n'
 
@@ -429,7 +445,13 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":{i}}}\n\n'
 
                     stop_reason = result["stop_reason"]
-                    output_tokens = result.get("output_tokens", 0)
+                    
+                    output_tokens = _estimate_tokens(full_content)
+                    for tu in result.get("tool_uses", []):
+                        output_tokens += _estimate_tokens(json.dumps(tu.get("input", {})))
+                    result["output_tokens"] = output_tokens
+                    result["input_tokens"] = est_input_tokens
+                    
                     yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":{output_tokens}}}}}\n\n'
                     yield f'event: message_stop\ndata: {{"type":"message_stop"}}\n\n'
 
@@ -457,10 +479,10 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 label = "请求超时" if is_timeout else "连接错误"
                 error_code = "timeout_error" if is_timeout else "connection_error"
                 error_status = 408 if is_timeout else 502
-                if retry_count < max_retries:
-                    logger.info(f"{label}，重试 {retry_count + 1}/{max_retries}")
-                    retry_count += 1
-                    await asyncio.sleep(0.5 * (2 ** retry_count))
+                if error_retry_count < max_error_retries:
+                    logger.info(f"{label}，重试 {error_retry_count + 1}/{max_error_retries}")
+                    error_retry_count += 1
+                    await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                     continue
                 if flow_id:
                     flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
@@ -468,10 +490,10 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                 return
             except Exception as e:
                 # 检查是否为可重试的网络错误
-                if is_retryable_error(None, e) and retry_count < max_retries:
-                    logger.error(f"网络错误，重试 {retry_count + 1}/{max_retries}: {type(e).__name__}")
-                    retry_count += 1
-                    await asyncio.sleep(0.5 * (2 ** retry_count))
+                if is_retryable_error(None, e) and error_retry_count < max_error_retries:
+                    logger.error(f"网络错误，重试 {error_retry_count + 1}/{max_error_retries}: {type(e).__name__}")
+                    error_retry_count += 1
+                    await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                     continue
                 if flow_id:
                     flow_monitor.fail_flow(flow_id, "api_error", str(e), 500)
@@ -481,7 +503,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False):
+async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None, thinking_enabled=False, est_input_tokens=0):
     """Handle non-streaming responses with two-phase 429 retry strategy.
     
     Phase 1: Sleep 2s and retry same account (covers most transient rate limits)
@@ -492,7 +514,9 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
     current_account = account
     rate_ctx = RetryContext()
     max_retries = max(len(state.accounts), 3)
-    retry_ctx = RetryableRequest(max_retries=max_retries)
+    max_error_retries = 3
+    error_retry_count = 0
+    # retry_ctx is not used anymore since we track manually like _handle_stream
     should_log = False
 
     for retry in range(max_retries + 1):
@@ -515,13 +539,14 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
 
                 # 处理可重试的服务端错误
                 if is_retryable_error(response.status_code):
-                    if retry < max_retries:
-                        logger.error(f"服务端错误 {response.status_code}，重试 {retry + 1}/{max_retries}")
-                        await retry_ctx.wait()
+                    if error_retry_count < max_error_retries:
+                        logger.error(f"服务端错误 {response.status_code}，重试 {error_retry_count + 1}/{max_error_retries}")
+                        error_retry_count += 1
+                        await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                         continue
                     if flow_id:
-                        flow_monitor.fail_flow(flow_id, "api_error", f"Server error after {max_retries} retries", response.status_code)
-                    raise HTTPException(response.status_code, f"Server error after {max_retries} retries")
+                        flow_monitor.fail_flow(flow_id, "api_error", f"Server error after {max_error_retries} retries", response.status_code)
+                    raise HTTPException(response.status_code, f"Server error after {max_error_retries} retries")
 
                 if response.status_code != 200:
                     error_msg = response.text
@@ -566,6 +591,14 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     raise HTTPException(status, error_message)
 
                 result = parse_event_stream_full(response.content)
+                
+                full_text = "".join(result.get("content", []))
+                output_tokens = _estimate_tokens(full_text)
+                for tu in result.get("tool_uses", []):
+                    output_tokens += _estimate_tokens(json.dumps(tu.get("input", {})))
+                result["output_tokens"] = output_tokens
+                result["input_tokens"] = est_input_tokens
+                
                 current_account.reset_quota_backoff()  # 成功后重置退避
                 get_rate_limiter().record_request(current_account.id)
 
@@ -597,9 +630,10 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
             error_status = 408 if is_timeout else 502
             error_msg = f"{label}: {e}"
             status_code = error_status
-            if retry < max_retries:
-                logger.info(f"{label}，重试 {retry + 1}/{max_retries}")
-                await retry_ctx.wait()
+            if error_retry_count < max_error_retries:
+                logger.info(f"{label}，重试 {error_retry_count + 1}/{max_error_retries}")
+                error_retry_count += 1
+                await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                 continue
             if flow_id:
                 flow_monitor.fail_flow(flow_id, error_code, f"{label} after retries", error_status)
@@ -609,9 +643,10 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
             error_msg = str(e)
             status_code = 500
             # 检查是否为可重试的网络错误
-            if is_retryable_error(None, e) and retry < max_retries:
-                logger.error(f"网络错误，重试 {retry + 1}/{max_retries}: {type(e).__name__}")
-                await retry_ctx.wait()
+            if is_retryable_error(None, e) and error_retry_count < max_error_retries:
+                logger.error(f"网络错误，重试 {error_retry_count + 1}/{max_error_retries}: {type(e).__name__}")
+                error_retry_count += 1
+                await asyncio.sleep(min(0.5 * (2 ** error_retry_count), 5.0))
                 continue
             if flow_id:
                 flow_monitor.fail_flow(flow_id, "api_error", str(e), 500)

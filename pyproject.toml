@@ -9,6 +9,7 @@ dependencies = [
     "curl-cffi>=v0.14.0",
     "loguru>=0.7.0",
     "sentry-sdk[fastapi]>=2.0.0",
+    "tiktoken>=0.7.0",
 ]
 
 [project.scripts]

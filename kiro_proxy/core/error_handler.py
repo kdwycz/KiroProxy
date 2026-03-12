@@ -21,6 +21,7 @@ class ErrorType(str, Enum):
     AUTH_FAILED = "auth_failed"                  # 认证失败
     SERVICE_UNAVAILABLE = "service_unavailable"  # 服务不可用
     MODEL_UNAVAILABLE = "model_unavailable"      # 模型不可用
+    INVALID_REQUEST = "invalid_request"          # 无效请求 (如无效模型、格式错误)
     UNKNOWN = "unknown"                          # 未知错误
 
 
@@ -118,7 +119,17 @@ def classify_error(status_code: int, error_text: str) -> KiroError:
             should_retry=True,
         )
     
-    # 7. 未知错误
+    # 7. 无效请求检测 (如无效模型)
+    if status_code == 400 and ("invalid model" in error_lower or "improperly formed request" in error_lower):
+        return KiroError(
+            type=ErrorType.INVALID_REQUEST,
+            status_code=status_code,
+            message=error_text,
+            user_message="无效请求 (模型不存在或请求参数格式不正确)",
+            should_retry=False,
+        )
+    
+    # 8. 未知错误
     return KiroError(
         type=ErrorType.UNKNOWN,
         status_code=status_code,
@@ -142,6 +153,7 @@ def get_anthropic_error_response(error: KiroError) -> dict:
         ErrorType.AUTH_FAILED: "authentication_error",
         ErrorType.SERVICE_UNAVAILABLE: "api_error",
         ErrorType.MODEL_UNAVAILABLE: "overloaded_error",
+        ErrorType.INVALID_REQUEST: "invalid_request_error",
         ErrorType.UNKNOWN: "api_error",
     }
     
