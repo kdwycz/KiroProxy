@@ -372,7 +372,10 @@ async def export_config():
     """导出配置"""
     return {
         "accounts": [
-            {"name": a.name, "token_path": a.token_path, "enabled": a.enabled}
+            {
+                "name": a.name, "token_path": a.token_path, "enabled": a.enabled,
+                "machine_id": a.get_machine_id(), "sqm_id": a.sqm_id, "dev_device_id": a.dev_device_id,
+            }
             for a in state.accounts
         ],
         "exported_at": datetime.now().isoformat()
@@ -393,7 +396,10 @@ async def import_config(request: Request):
                     id=uuid.uuid4().hex[:8],
                     name=acc_data.get("name", "导入账号"),
                     token_path=token_path,
-                    enabled=acc_data.get("enabled", True)
+                    enabled=acc_data.get("enabled", True),
+                    machine_id=acc_data.get("machine_id"),
+                    sqm_id=acc_data.get("sqm_id"),
+                    dev_device_id=acc_data.get("dev_device_id"),
                 )
                 state.accounts.append(account)
                 account.load_credentials()
@@ -833,7 +839,7 @@ async def get_account_usage_info(account_id: str):
 # ==================== 账号导入导出 API ====================
 
 async def export_accounts():
-    """导出所有账号配置（包含 token）"""
+    """导出所有账号配置（包含 token 和遥测 ID）"""
     accounts_data = []
     for acc in state.accounts:
         creds = acc.get_credentials()
@@ -841,6 +847,9 @@ async def export_accounts():
             accounts_data.append({
                 "name": acc.name,
                 "enabled": acc.enabled,
+                "machine_id": acc.get_machine_id(),
+                "sqm_id": acc.sqm_id,
+                "dev_device_id": acc.dev_device_id,
                 "credentials": {
                     "accessToken": creds.access_token,
                     "refreshToken": creds.refresh_token,
@@ -855,7 +864,7 @@ async def export_accounts():
         "ok": True,
         "accounts": accounts_data,
         "exported_at": datetime.now().isoformat(),
-        "version": "1.0"
+        "version": "1.1"
     }
 
 
@@ -895,7 +904,12 @@ def _convert_kam_account(kam: dict) -> tuple:
     if kam.get("clientIdHash"):
         creds["clientIdHash"] = kam["clientIdHash"]
     
-    return name, creds
+    # 提取遥测 ID（如果 KAM 导出中包含）
+    telemetry = {}
+    if kam.get("machineId"):
+        telemetry["machine_id"] = kam["machineId"]
+    
+    return name, creds, telemetry
 
 
 def _detect_import_format(body) -> tuple:
@@ -932,15 +946,21 @@ async def import_accounts(request: Request):
     
     for acc_data in accounts_list:
         try:
+            telemetry = {}
             if fmt == "kam":
                 # kiro-account-manager 格式：扁平结构
-                name, creds = _convert_kam_account(acc_data)
+                name, creds, telemetry = _convert_kam_account(acc_data)
                 enabled = acc_data.get("status") != "已封禁"
             else:
                 # KiroProxy 格式：嵌套 credentials
                 name = acc_data.get("name", "导入账号")
                 creds = acc_data.get("credentials", {})
                 enabled = acc_data.get("enabled", True)
+                # 读取遥测 ID
+                telemetry = {
+                    k: acc_data[k] for k in ("machine_id", "sqm_id", "dev_device_id")
+                    if acc_data.get(k)
+                }
             
             has_access_token = bool(creds.get("accessToken"))
             has_refresh_token = bool(creds.get("refreshToken"))
@@ -961,12 +981,15 @@ async def import_accounts(request: Request):
                 k: v for k, v in creds.items() if v is not None
             }, f"imported-{uuid.uuid4().hex[:8]}")
             
-            # 添加账号
+            # 添加账号（导入的遥测 ID 优先使用）
             account = Account(
                 id=uuid.uuid4().hex[:8],
                 name=name,
                 token_path=file_path,
-                enabled=enabled
+                enabled=enabled,
+                machine_id=telemetry.get("machine_id"),
+                sqm_id=telemetry.get("sqm_id"),
+                dev_device_id=telemetry.get("dev_device_id"),
             )
             state.accounts.append(account)
             account.load_credentials()

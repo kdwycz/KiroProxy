@@ -49,7 +49,7 @@ def generate_machine_id(
     
     每个凭证生成独立的 Machine ID，避免多账号共用同一指纹被检测。
     优先级：profileArn > clientId > 系统硬件 ID
-    添加时间因子：按小时变化，避免指纹完全固化。
+    生成后固定不变（不含时间因子）。
     """
     unique_key = None
     if profile_arn:
@@ -59,13 +59,42 @@ def generate_machine_id(
     else:
         unique_key = get_raw_machine_id() or "KIRO_DEFAULT_MACHINE"
     
-    hour_slot = int(time.time()) // 3600
-    
     hasher = hashlib.sha256()
     hasher.update(unique_key.encode())
-    hasher.update(hour_slot.to_bytes(8, 'little'))
     
     return hasher.hexdigest()
+
+
+def generate_telemetry_ids() -> dict:
+    """生成完整遥测 ID 集合（与 kiro-account-manager 对齐）
+    
+    Returns:
+        dict with keys:
+            machine_id: 64 位十六进制字符串 (SHA256)
+            sqm_id: GUID 格式 {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}
+            dev_device_id: UUID4 小写
+    """
+    import os
+    import uuid
+    
+    # machine_id: SHA256(random_bytes + timestamp_nanos)
+    random_bytes = os.urandom(32)
+    hasher = hashlib.sha256()
+    hasher.update(random_bytes)
+    hasher.update(int(time.time() * 1e9).to_bytes(8, 'little'))
+    machine_id = hasher.hexdigest()
+    
+    # sqm_id: {UUID4-UPPERCASE} — GUID 格式
+    sqm_id = "{" + str(uuid.uuid4()).upper() + "}"
+    
+    # dev_device_id: UUID4 小写
+    dev_device_id = str(uuid.uuid4())
+    
+    return {
+        "machine_id": machine_id,
+        "sqm_id": sqm_id,
+        "dev_device_id": dev_device_id,
+    }
 
 
 def get_kiro_version() -> str:

@@ -34,7 +34,10 @@ class ProxyState:
                         id=acc_data["id"],
                         name=acc_data["name"],
                         token_path=acc_data["token_path"],
-                        enabled=acc_data.get("enabled", True)
+                        enabled=acc_data.get("enabled", True),
+                        machine_id=acc_data.get("machine_id"),
+                        sqm_id=acc_data.get("sqm_id"),
+                        dev_device_id=acc_data.get("dev_device_id"),
                     ))
             logger.info(f"从配置加载 {len(self.accounts)} 个账号")
         
@@ -46,6 +49,14 @@ class ProxyState:
                 token_path=str(TOKEN_PATH)
             ))
             self._save_accounts()
+        
+        # 迁移：为缺少 machine_id 的账号生成遥测 ID 并立即持久化
+        needs_migration = any(not acc.machine_id for acc in self.accounts)
+        if needs_migration and self.accounts:
+            for acc in self.accounts:
+                acc.get_machine_id()  # 触发 _init_telemetry_ids
+            self._save_accounts()
+            logger.info(f"已为 {sum(1 for a in self.accounts if a.machine_id)} 个账号生成遥测 ID")
     
     def _save_accounts(self):
         """保存账号到配置文件"""
@@ -54,7 +65,10 @@ class ProxyState:
                 "id": acc.id,
                 "name": acc.name,
                 "token_path": acc.token_path,
-                "enabled": acc.enabled
+                "enabled": acc.enabled,
+                "machine_id": acc.get_machine_id(),
+                "sqm_id": acc.sqm_id,
+                "dev_device_id": acc.dev_device_id,
             }
             for acc in self.accounts
         ]

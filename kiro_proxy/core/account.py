@@ -9,7 +9,7 @@ from .logger import logger
 
 from ..credential import (
     KiroCredentials, TokenRefresher, CredentialStatus,
-    generate_machine_id, quota_manager
+    generate_machine_id, generate_telemetry_ids, quota_manager
 )
 
 
@@ -23,8 +23,12 @@ class Account:
 
     status: CredentialStatus = CredentialStatus.ACTIVE
     
+    # 持久化遥测 ID（与 kiro-account-manager 对齐）
+    machine_id: Optional[str] = None
+    sqm_id: Optional[str] = None
+    dev_device_id: Optional[str] = None
+    
     _credentials: Optional[KiroCredentials] = field(default=None, repr=False)
-    _machine_id: Optional[str] = field(default=None, repr=False)
     
     def is_available(self) -> bool:
         """检查账号是否可用"""
@@ -87,17 +91,17 @@ class Account:
             return ""
     
     def get_machine_id(self) -> str:
-        """获取基于此账号的 Machine ID"""
-        if self._machine_id:
-            return self._machine_id
-        
-        creds = self.get_credentials()
-        if creds:
-            self._machine_id = generate_machine_id(creds.profile_arn, creds.client_id)
-        else:
-            self._machine_id = generate_machine_id()
-        
-        return self._machine_id
+        """获取此账号的 Machine ID（持久化）"""
+        if not self.machine_id:
+            self._init_telemetry_ids()
+        return self.machine_id
+    
+    def _init_telemetry_ids(self):
+        """首次生成遥测 ID 集合（与 kiro-account-manager 对齐）"""
+        ids = generate_telemetry_ids()
+        self.machine_id = ids["machine_id"]
+        self.sqm_id = ids["sqm_id"]
+        self.dev_device_id = ids["dev_device_id"]
     
     def is_token_expired(self) -> bool:
         """检查 token 是否过期"""
